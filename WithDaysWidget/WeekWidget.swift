@@ -158,8 +158,10 @@ struct WeekWidgetView: View {
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        // The app's theme setting isn't reachable without an App Group, so the widget is always light.
+        .environment(\.colorScheme, .light)
         .containerBackground(for: .widget) {
-            Color(.systemBackground)
+            Color.white
         }
     }
 }
