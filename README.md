@@ -1,0 +1,57 @@
+# WithDays
+
+Appleのカレンダーと同期する iOS 用の月表示カレンダー。SwiftUI + EventKit、iOS 26（Liquid Glass）対象。
+
+予定は Appleのカレンダー（EventKit）に直接保存されるため、iCloud を通じて iPhone・iPad・Mac のカレンダーと自動で同期されます。テンプレートとタイトル履歴の設定だけがアプリ内に保存されます。
+
+## 機能
+
+| 画面 | 内容 |
+| --- | --- |
+| ホーム | 上部の「2026年 9月」をタップで年・月を選ぶシート。左右スワイプで月を移動。カレンダーは6週固定、下に選択中の日付の予定リスト |
+| カレンダー | 終日の予定は塗りつぶし、時刻のある予定は色付き文字。複数日の予定は日をまたいで表示。土曜は青、日曜・祝日は赤 |
+| 予定の長押し | 半分の高さの詳細シート（削除・移動・複製）。上に引き上げると編集画面になる |
+| 空いた場所の長押し | テンプレートのトレイ。テンプレートを日付へドラッグすると予定になる |
+| ＋ボタン | 「あたらしい予定」。タイトル入力中は過去の予定から候補を表示し、選ぶと日付以外をコピー |
+| くりかえし | 毎日・毎週（曜日指定）・毎月（日付指定 / 「最初の月曜日」など）・毎年 |
+| 検索 | タイトル・場所・メモで前後2年分を検索 |
+| 設定 | テーマ、週の始まり、表示するカレンダー、新しい予定のカレンダー、祝日カレンダー、テンプレート管理 |
+
+祝日は端末の「日本の祝日」カレンダーから判定します（予定としては表示しません）。
+
+## ビルド（GitHub Actions）
+
+Mac がなくても GitHub Actions（`macos-26` ランナー）で未署名 IPA を作れます。
+
+1. `main` に push すると、ビルドされた `WithDays.ipa` が Actions の Artifacts に上がります。
+2. `v1.0.0` のようなタグを push すると、GitHub Release に IPA を添付し、`source.json` を自動更新します。
+
+```bash
+git tag v1.0.0
+```
+
+```bash
+git push origin v1.0.0
+```
+
+## SideStore で配信
+
+SideStore の「Sources」に次の URL を追加します（リポジトリが public である必要があります）。
+
+```
+https://raw.githubusercontent.com/ffuime/calendar/main/source.json
+```
+
+または Release から `WithDays.ipa` をダウンロードして SideStore で直接インストールします。
+
+## ローカル開発（Mac）
+
+```bash
+brew install xcodegen
+```
+
+```bash
+xcodegen generate
+```
+
+`WithDays.xcodeproj` を Xcode 26 で開きます。
