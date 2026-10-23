@@ -2,7 +2,7 @@
   "name": "WithDays",
   "identifier": "com.ffuime.withdays.source",
   "subtitle": "Appleのカレンダーと同期するシンプルなカレンダー",
-  "iconURL": "https://raw.githubusercontent.com/ffuime/calendar/main/WithDays/Assets.xcassets/AppIcon.appiconset/icon.png",
+  "iconURL": "https://raw.githubusercontent.com/ffp1/withdays/main/WithDays/Assets.xcassets/AppIcon.appiconset/icon.png",
   "tintColor": "#065a8c",
   "apps": [
     {
@@ -11,7 +11,7 @@
       "developerName": "ffuime",
       "subtitle": "Appleのカレンダーと同期するシンプルなカレンダー",
       "localizedDescription": "Appleのカレンダーの予定をそのまま読み書きする月表示カレンダー。テンプレートをドラッグして予定を入れたり、予定を別の日へ移動・複製したりできます。",
-      "iconURL": "https://raw.githubusercontent.com/ffuime/calendar/main/WithDays/Assets.xcassets/AppIcon.appiconset/icon.png",
+      "iconURL": "https://raw.githubusercontent.com/ffp1/withdays/main/WithDays/Assets.xcassets/AppIcon.appiconset/icon.png",
       "tintColor": "#065a8c",
       "category": "productivity",
       "versions": []

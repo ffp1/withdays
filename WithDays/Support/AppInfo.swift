@@ -3,7 +3,7 @@ import Foundation
 enum AppInfo {
     static let name = "WithDays"
     static let summary = "WithDays は、Appleのカレンダーの予定をそのまま読み書きする月表示のカレンダーです。iPhone や Mac のカレンダーと自動で同期されます。"
-    static let repositoryURL = URL(string: "https://github.com/ffuime/calendar")!
+    static let repositoryURL = URL(string: "https://github.com/ffp1/withdays")!
 
     static var version: String {
         Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "–"
