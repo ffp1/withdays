@@ -16,6 +16,15 @@ enum EditorMode: Identifiable {
     }
 }
 
+/// Where the title field sits, so the history box can float right under it.
+private struct TitleFieldAnchor: PreferenceKey {
+    static var defaultValue: Anchor<CGRect>? = nil
+
+    static func reduce(value: inout Anchor<CGRect>?, nextValue: () -> Anchor<CGRect>?) {
+        value = value ?? nextValue()
+    }
+}
+
 enum EditorPath: Hashable {
     case calendar, newCalendar, repeatRule, monthlyRule
 }
@@ -75,7 +84,7 @@ struct EventEditorView: View {
 
     private var suggestions: [EKEvent] {
         guard titleFocused else { return [] }
-        return store.history(matching: draft.title)
+        return store.history(matching: draft.title, limit: 5)
     }
 
     var body: some View {
@@ -86,6 +95,7 @@ struct EventEditorView: View {
                         .font(.system(size: 17 * 1.2))
                         .focused($titleFocused)
                         .submitLabel(.done)
+                        .anchorPreference(key: TitleFieldAnchor.self, value: .bounds) { $0 }
                     NavigationLink(value: EditorPath.calendar) {
                         HStack {
                             Text("カレンダー")
@@ -95,14 +105,6 @@ struct EventEditorView: View {
                                 Text(calendar.title)
                                     .foregroundStyle(.secondary)
                             }
-                        }
-                    }
-                }
-
-                if !suggestions.isEmpty {
-                    Section("履歴") {
-                        ForEach(suggestions, id: \.self) { event in
-                            Button { applySuggestion(event) } label: { suggestionRow(event) }
                         }
                     }
                 }
@@ -126,6 +128,18 @@ struct EventEditorView: View {
                         .autocorrectionDisabled()
                     TextField("メモ", text: $draft.notes, axis: .vertical)
                         .lineLimit(3...)
+                }
+            }
+            .overlayPreferenceValue(TitleFieldAnchor.self) { anchor in
+                // History floats just under the title field, over the rest of the form.
+                GeometryReader { geo in
+                    let list = suggestions
+                    if let anchor, !list.isEmpty {
+                        let field = geo[anchor]
+                        suggestionBox(list)
+                            .frame(width: field.width + 24)
+                            .offset(x: field.minX - 12, y: field.maxY + 10)
+                    }
                 }
             }
             .safeAreaInset(edge: .bottom) { bottomBar }
@@ -213,6 +227,28 @@ struct EventEditorView: View {
         }
         .padding(.horizontal, 20)
         .padding(.bottom, 8)
+    }
+
+    private func suggestionBox(_ events: [EKEvent]) -> some View {
+        VStack(spacing: 0) {
+            ForEach(Array(events.enumerated()), id: \.offset) { index, event in
+                if index > 0 { Divider().padding(.leading, 32) }
+                Button { applySuggestion(event) } label: {
+                    suggestionRow(event)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(.horizontal, 14)
+                        .padding(.vertical, 9)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+            }
+        }
+        .background(Color(.systemBackground), in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: 16, style: .continuous)
+                .stroke(Color.primary.opacity(0.08))
+        }
+        .shadow(color: .black.opacity(0.15), radius: 14, y: 6)
     }
 
     private func suggestionRow(_ event: EKEvent) -> some View {

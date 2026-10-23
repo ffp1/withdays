@@ -6,6 +6,7 @@ struct DayEventList: View {
     let day: Date
     var onEdit: (EKEvent) -> Void
     var onDelete: (EKEvent) -> Void
+    var onAdd: () -> Void
 
     @Environment(CalendarStore.self) private var store
 
@@ -22,6 +23,7 @@ struct DayEventList: View {
                 Text("予定はありません")
                     .font(.system(size: 14))
                     .foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, alignment: .center)
                     .listRowSeparator(.hidden)
             }
             ForEach(events, id: \.self) { event in
@@ -41,6 +43,17 @@ struct DayEventList: View {
                         .tint(.gray)
                     }
             }
+
+            Button(action: onAdd) {
+                Label("予定を追加", systemImage: "plus")
+                    .font(.system(size: 15, weight: .semibold))
+                    .foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, alignment: .center)
+                    .padding(.vertical, 4)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .listRowSeparator(.hidden)
         }
         .listStyle(.plain)
         .contentMargins(.bottom, 96, for: .scrollContent)

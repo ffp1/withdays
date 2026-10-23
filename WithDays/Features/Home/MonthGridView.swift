@@ -97,12 +97,14 @@ private struct WeekRow: View {
                         .onTapGesture { selectedDate = day }
                         .simultaneousGesture(TapGesture(count: 2).onEnded { onDayDoubleTap(day) })
                         .onLongPressGesture { onEmptyLongPress(day) }
+                        .zIndex(CalendarMath.isSameDay(day, .now) ? 1 : 0)
                     }
                 }
 
                 ForEach(placed) { item in
                     let top = GridMetrics.laneTop + CGFloat(item.lane) * GridMetrics.laneHeight
-                    if top < GridMetrics.rowHeight {
+                    // Only lines that fit completely; the row is not clipped so today's number can grow past it.
+                    if top + GridMetrics.laneHeight - 2 <= GridMetrics.rowHeight {
                         let span = CGFloat(item.endCol - item.startCol + 1)
                         let dayAt: (CGPoint) -> Date = { location in
                             week[min(item.endCol, item.startCol + Int(location.x / width))]
@@ -128,8 +130,17 @@ private struct WeekRow: View {
             )
         }
         .frame(height: GridMetrics.rowHeight)
-        .clipped()
     }
+}
+
+extension EnvironmentValues {
+    /// Bumped when 今月 is pressed while today is already selected; today's number then jumps and shakes.
+    @Entry var todayPulse = 0
+}
+
+private struct PulseValues {
+    var scale = 1.0
+    var angle = 0.0
 }
 
 private struct DayCell: View {
@@ -140,12 +151,14 @@ private struct DayCell: View {
     let isToday: Bool
     let isDropTarget: Bool
 
+    @Environment(\.todayPulse) private var todayPulse
+
     var body: some View {
         ZStack(alignment: .topLeading) {
-            if isDropTarget {
-                Color.brand.opacity(0.16)
-            } else if isSelected {
-                Color.primary.opacity(0.07)
+            if isDropTarget || isSelected {
+                RoundedRectangle(cornerRadius: 6, style: .continuous)
+                    .fill(isDropTarget ? Color.brand.opacity(0.16) : Color.primary.opacity(0.07))
+                    .padding(1)
             }
 
             Rectangle()
@@ -163,11 +176,32 @@ private struct DayCell: View {
                 .background {
                     if isToday { Circle().fill(Color.brand) }
                 }
+                .keyframeAnimator(initialValue: PulseValues(), trigger: isToday ? todayPulse : 0) { content, value in
+                    content
+                        .scaleEffect(value.scale)
+                        .rotationEffect(.degrees(value.angle))
+                } keyframes: { _ in
+                    KeyframeTrack(\.scale) {
+                        SpringKeyframe(1.7, duration: 0.22, spring: .bouncy)
+                        LinearKeyframe(1.7, duration: 0.45)
+                        SpringKeyframe(1.0, duration: 0.35, spring: .bouncy)
+                    }
+                    KeyframeTrack(\.angle) {
+                        LinearKeyframe(0, duration: 0.18)
+                        LinearKeyframe(-14, duration: 0.07)
+                        LinearKeyframe(14, duration: 0.07)
+                        LinearKeyframe(-12, duration: 0.07)
+                        LinearKeyframe(12, duration: 0.07)
+                        LinearKeyframe(-6, duration: 0.07)
+                        LinearKeyframe(0, duration: 0.07)
+                    }
+                }
                 .padding(.leading, 2)
                 .padding(.top, 1)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .opacity(inMonth ? 1 : 0.35)
+        .animation(.easeInOut(duration: 0.2), value: isSelected)
     }
 }
 

@@ -22,6 +22,7 @@ struct HomeView: View {
     @State private var showTemplates = false
     @State private var spanRequest: SpanRequest?
     @State private var errorMessage: String?
+    @State private var todayPulse = 0
 
     init() {
         let stored = UserDefaults.standard.double(forKey: SettingsKey.lastMonth)
@@ -44,7 +45,8 @@ struct HomeView: View {
                     DayEventList(
                         day: selectedDate,
                         onEdit: { editor = .edit($0) },
-                        onDelete: delete
+                        onDelete: delete,
+                        onAdd: { editor = .new }
                     )
                     if showTemplates {
                         TemplateTray(
@@ -93,6 +95,7 @@ struct HomeView: View {
         }
         .sensoryFeedback(.impact(weight: .medium), trigger: detail?.id) { _, new in new != nil }
         .sensoryFeedback(.impact(weight: .medium), trigger: showTemplates) { _, new in new }
+        .sensoryFeedback(.impact(weight: .heavy), trigger: todayPulse)
         .spanDialog($spanRequest)
         .errorAlert($errorMessage)
     }
@@ -155,12 +158,11 @@ struct HomeView: View {
         .scrollIndicators(.hidden)
         .scrollPosition(id: $page)
         .frame(height: GridMetrics.height)
+        .environment(\.todayPulse, todayPulse)
         .sensoryFeedback(.selection, trigger: selectedDate)
         .onChange(of: page) { _, _ in
+            // The selected day stays as it is when the month changes.
             UserDefaults.standard.set(displayedMonth.timeIntervalSince1970, forKey: SettingsKey.lastMonth)
-            if !CalendarMath.isSameMonth(selectedDate, displayedMonth) {
-                selectedDate = CalendarMath.defaultSelection(in: displayedMonth)
-            }
         }
     }
 
@@ -195,8 +197,8 @@ struct HomeView: View {
 
     private var thisMonthButton: some View {
         Button(action: backToThisMonth) {
-            Text("今月")
-                .font(.system(size: 15, weight: .bold))
+            Image(systemName: "arrow.shape.turn.up.left.fill")
+                .font(.system(size: 20, weight: .semibold))
                 .foregroundStyle(.primary)
                 .frame(width: 56, height: 56)
         }
@@ -206,20 +208,22 @@ struct HomeView: View {
 
     // MARK: Actions
 
+    /// Scrolls to the month of `date`; the selected day is left alone.
     private func jump(to date: Date) {
         let offset = CalendarMath.months(from: baseMonth, to: date)
-        page = min(max(offset, Self.pageRange.lowerBound), Self.pageRange.upperBound)
-        selectedDate = CalendarMath.defaultSelection(in: CalendarMath.startOfMonth(date))
+        withAnimation(.snappy) {
+            page = min(max(offset, Self.pageRange.lowerBound), Self.pageRange.upperBound)
+        }
     }
 
     private func backToThisMonth() {
         let today = CalendarMath.startOfDay(.now)
-        // Scroll smoothly from nearby months; jump straight from far away.
-        if abs(page ?? 0) <= 2 {
-            withAnimation(.snappy) { page = 0 }
-        } else {
-            page = 0
+        if page == 0, CalendarMath.isSameDay(selectedDate, today) {
+            // Already there: make today's number speak up instead.
+            todayPulse += 1
+            return
         }
+        withAnimation(.snappy) { page = 0 }
         selectedDate = today
     }
 
