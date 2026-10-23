@@ -28,6 +28,7 @@ struct DayEventList: View {
             }
             ForEach(events, id: \.self) { event in
                 EventRow(event: event, dayStart: start, dayEnd: end)
+                    .listRowSeparator(.visible)
                     .contentShape(Rectangle())
                     .onTapGesture { onEdit(event) }
                     .swipeActions(edge: .trailing) {
@@ -53,7 +54,8 @@ struct DayEventList: View {
                     .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
-            .listRowSeparator(.hidden)
+            // Hide only its own bottom line so the last event still gets a divider above this row.
+            .listRowSeparator(.hidden, edges: .bottom)
         }
         .listStyle(.plain)
         .contentMargins(.bottom, 96, for: .scrollContent)

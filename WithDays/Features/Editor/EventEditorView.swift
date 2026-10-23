@@ -92,7 +92,7 @@ struct EventEditorView: View {
             Form {
                 Section {
                     TextField("タイトル", text: $draft.title)
-                        .font(.system(size: 17 * 1.2))
+                        .font(.system(size: 17 * 1.2, weight: .bold))
                         .focused($titleFocused)
                         .submitLabel(.done)
                         .anchorPreference(key: TitleFieldAnchor.self, value: .bounds) { $0 }

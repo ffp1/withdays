@@ -160,6 +160,7 @@ struct HomeView: View {
         .frame(height: GridMetrics.height)
         .environment(\.todayPulse, todayPulse)
         .sensoryFeedback(.selection, trigger: selectedDate)
+        .sensoryFeedback(.impact(weight: .light), trigger: page)
         .onChange(of: page) { _, _ in
             // The selected day stays as it is when the month changes.
             UserDefaults.standard.set(displayedMonth.timeIntervalSince1970, forKey: SettingsKey.lastMonth)
@@ -188,7 +189,7 @@ struct HomeView: View {
             editor = .new
         } label: {
             Image(systemName: "plus")
-                .font(.system(size: 22, weight: .semibold))
+                .font(.system(size: 26.4, weight: .semibold))
                 .frame(width: 56, height: 56)
         }
         .buttonStyle(.glassProminent)
@@ -198,7 +199,7 @@ struct HomeView: View {
     private var thisMonthButton: some View {
         Button(action: backToThisMonth) {
             Image(systemName: "arrow.uturn.left")
-                .font(.system(size: 20, weight: .semibold))
+                .font(.system(size: 24, weight: .semibold))
                 .foregroundStyle(.primary)
                 .frame(width: 56, height: 56)
         }
@@ -211,8 +212,20 @@ struct HomeView: View {
     /// Scrolls to the month of `date`; the selected day is left alone.
     private func jump(to date: Date) {
         let offset = CalendarMath.months(from: baseMonth, to: date)
-        withAnimation(.snappy) {
-            page = min(max(offset, Self.pageRange.lowerBound), Self.pageRange.upperBound)
+        scroll(to: min(max(offset, Self.pageRange.lowerBound), Self.pageRange.upperBound))
+    }
+
+    /// Jumps next to `target` without animation, then animates only the last month.
+    private func scroll(to target: Int) {
+        let current = page ?? 0
+        guard target != current else { return }
+        if abs(target - current) > 1 {
+            page = target + (target > current ? -1 : 1)
+            Task { @MainActor in
+                withAnimation(.snappy) { page = target }
+            }
+        } else {
+            withAnimation(.snappy) { page = target }
         }
     }
 
@@ -223,7 +236,7 @@ struct HomeView: View {
             todayPulse += 1
             return
         }
-        withAnimation(.snappy) { page = 0 }
+        scroll(to: 0)
         selectedDate = today
     }
 

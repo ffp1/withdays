@@ -90,7 +90,7 @@ struct MonthPickerSheet: View {
             pick(month)
         } label: {
             Text("\(month)")
-                .font(.system(size: 20, weight: isSelected ? .bold : .regular))
+                .font(.system(size: 20, weight: isSelected || isThisMonth ? .bold : .regular))
                 .monospacedDigit()
                 .foregroundStyle(isSelected ? Color.white : isThisMonth ? Color.brand : Color.primary)
                 .frame(width: 50, height: 50)
