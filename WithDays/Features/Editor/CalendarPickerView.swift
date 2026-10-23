@@ -33,7 +33,7 @@ struct CalendarPickerView: View {
             Section {
                 NavigationLink(value: EditorPath.newCalendar) {
                     Label("カレンダーを追加", systemImage: "plus")
-                        .foregroundStyle(Color.brand)
+                        .foregroundStyle(.primary)
                 }
             }
         }

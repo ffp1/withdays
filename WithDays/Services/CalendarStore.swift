@@ -191,6 +191,15 @@ final class CalendarStore {
         return days
     }
 
+    /// The holiday's name on `day`, e.g. 「文化の日」.
+    func holidayName(on day: Date) -> String? {
+        _ = revision
+        guard let holidayCalendar else { return nil }
+        let start = CalendarMath.startOfDay(day)
+        let predicate = eventStore.predicateForEvents(withStart: start, end: CalendarMath.addDays(1, to: start), calendars: [holidayCalendar])
+        return eventStore.events(matching: predicate).compactMap(\.title).first
+    }
+
     /// EventKit caps a predicate at four years, so long ranges are fetched a year at a time.
     private func fetch(from start: Date, to end: Date, calendars list: [EKCalendar]) -> [EKEvent] {
         guard !list.isEmpty else { return [] }

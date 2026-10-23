@@ -56,8 +56,15 @@ struct HomeView: View {
                     }
                 }
             }
-            .overlay(alignment: .bottomTrailing) {
-                if !showTemplates { addButton }
+            .overlay(alignment: .bottom) {
+                if !showTemplates {
+                    HStack {
+                        thisMonthButton
+                        Spacer()
+                        addButton
+                    }
+                    .padding(20)
+                }
             }
             .toolbar { toolbar }
             .navigationBarTitleDisplayMode(.inline)
@@ -84,6 +91,8 @@ struct HomeView: View {
         .sheet(item: $detail) { ref in
             EventDetailSheet(event: ref.event)
         }
+        .sensoryFeedback(.impact(weight: .medium), trigger: detail?.id) { _, new in new != nil }
+        .sensoryFeedback(.impact(weight: .medium), trigger: showTemplates) { _, new in new }
         .spanDialog($spanRequest)
         .errorAlert($errorMessage)
     }
@@ -131,6 +140,10 @@ struct HomeView: View {
                             selectedDate = day
                             withAnimation(.snappy) { showTemplates = true }
                         },
+                        onDayDoubleTap: { day in
+                            selectedDate = day
+                            editor = .new
+                        },
                         onTemplateDrop: dropTemplate
                     )
                     .containerRelativeFrame(.horizontal)
@@ -152,13 +165,20 @@ struct HomeView: View {
     }
 
     private var dayBand: some View {
-        Text(Fmt.fullDate(selectedDate))
-            .font(.system(size: 13, weight: .semibold))
-            .monospacedDigit()
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(.horizontal, 16)
-            .padding(.vertical, 6)
-            .background(Color(.secondarySystemBackground))
+        let holiday = store.holidayName(on: selectedDate)
+        return HStack(spacing: 8) {
+            Text(Fmt.fullDate(selectedDate))
+                .monospacedDigit()
+            if let holiday {
+                Text(holiday)
+            }
+        }
+        .font(.system(size: 13, weight: .semibold))
+        .foregroundStyle(Color.dayNumber(weekday: CalendarMath.weekday(selectedDate), isHoliday: holiday != nil))
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.horizontal, 16)
+        .padding(.vertical, 6)
+        .background(Color(.secondarySystemBackground))
     }
 
     private var addButton: some View {
@@ -171,7 +191,17 @@ struct HomeView: View {
         }
         .buttonStyle(.glassProminent)
         .buttonBorderShape(.circle)
-        .padding(20)
+    }
+
+    private var thisMonthButton: some View {
+        Button(action: backToThisMonth) {
+            Text("今月")
+                .font(.system(size: 15, weight: .bold))
+                .foregroundStyle(.primary)
+                .frame(width: 56, height: 56)
+        }
+        .buttonStyle(.glass)
+        .buttonBorderShape(.circle)
     }
 
     // MARK: Actions
@@ -180,6 +210,17 @@ struct HomeView: View {
         let offset = CalendarMath.months(from: baseMonth, to: date)
         page = min(max(offset, Self.pageRange.lowerBound), Self.pageRange.upperBound)
         selectedDate = CalendarMath.defaultSelection(in: CalendarMath.startOfMonth(date))
+    }
+
+    private func backToThisMonth() {
+        let today = CalendarMath.startOfDay(.now)
+        // Scroll smoothly from nearby months; jump straight from far away.
+        if abs(page ?? 0) <= 2 {
+            withAnimation(.snappy) { page = 0 }
+        } else {
+            page = 0
+        }
+        selectedDate = today
     }
 
     private func delete(_ event: EKEvent) {

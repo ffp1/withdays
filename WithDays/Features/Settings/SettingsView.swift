@@ -62,6 +62,7 @@ struct SettingsView: View {
                         UIApplication.shared.open(url)
                     }
                 }
+                .foregroundStyle(.primary)
             } header: {
                 Text("同期")
             } footer: {
@@ -81,6 +82,7 @@ struct SettingsView: View {
                 NavigationLink("更新履歴") { ChangelogView() }
                 Link(destination: AppInfo.repositoryURL) {
                     Label("GitHub", systemImage: "chevron.left.forwardslash.chevron.right")
+                        .foregroundStyle(.primary)
                 }
             }
         }
@@ -150,6 +152,7 @@ private struct TemplateListView: View {
                 editing = .template(nil)
             } label: {
                 Label("テンプレートを登録", systemImage: "plus")
+                    .foregroundStyle(.primary)
             }
         }
         .toolbar { EditButton() }

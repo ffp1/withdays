@@ -204,11 +204,11 @@ struct EventEditorView: View {
                 Button(role: .destructive, action: requestDelete) {
                     Image(systemName: "trash")
                         .font(.system(size: 17, weight: .semibold))
+                        .foregroundStyle(.red)
                         .padding(6)
                 }
                 .buttonStyle(.glass)
                 .buttonBorderShape(.circle)
-                .tint(.red)
             }
         }
         .padding(.horizontal, 20)

@@ -6,7 +6,7 @@ enum GridMetrics {
     static let weekdayHeight: CGFloat = 22
     static let rowHeight: CGFloat = 70
     /// Where the first event line starts inside a day, below the number and its underline.
-    static let laneTop: CGFloat = 22
+    static let laneTop: CGFloat = 23
     static let laneHeight: CGFloat = 15
     static var height: CGFloat { weekdayHeight + rowHeight * 6 }
 }
@@ -17,6 +17,7 @@ struct MonthGridView: View {
     @Binding var selectedDate: Date
     var onEventLongPress: (EKEvent) -> Void
     var onEmptyLongPress: (Date) -> Void
+    var onDayDoubleTap: (Date) -> Void
     var onTemplateDrop: (UUID, Date) -> Void
 
     @Environment(CalendarStore.self) private var store
@@ -40,6 +41,7 @@ struct MonthGridView: View {
                     selectedDate: $selectedDate,
                     onEventLongPress: onEventLongPress,
                     onEmptyLongPress: onEmptyLongPress,
+                    onDayDoubleTap: onDayDoubleTap,
                     onTemplateDrop: onTemplateDrop
                 )
             }
@@ -71,6 +73,7 @@ private struct WeekRow: View {
     @Binding var selectedDate: Date
     var onEventLongPress: (EKEvent) -> Void
     var onEmptyLongPress: (Date) -> Void
+    var onDayDoubleTap: (Date) -> Void
     var onTemplateDrop: (UUID, Date) -> Void
 
     @State private var dropColumn: Int?
@@ -89,9 +92,10 @@ private struct WeekRow: View {
                             isToday: CalendarMath.isSameDay(day, .now),
                             isDropTarget: dropColumn == index
                         )
-                        .frame(width: width, height: GridMetrics.rowHeight)
+                        .frame(width: width, height: GridMetrics.rowHeight, alignment: .topLeading)
                         .contentShape(Rectangle())
                         .onTapGesture { selectedDate = day }
+                        .simultaneousGesture(TapGesture(count: 2).onEnded { onDayDoubleTap(day) })
                         .onLongPressGesture { onEmptyLongPress(day) }
                     }
                 }
@@ -100,16 +104,21 @@ private struct WeekRow: View {
                     let top = GridMetrics.laneTop + CGFloat(item.lane) * GridMetrics.laneHeight
                     if top < GridMetrics.rowHeight {
                         let span = CGFloat(item.endCol - item.startCol + 1)
-                        EventChip(event: item.event, isMultiDay: item.isMultiDay)
-                            .frame(width: span * width - 4, height: GridMetrics.laneHeight - 2)
-                            .opacity(CalendarMath.isSameMonth(week[item.startCol], month) || CalendarMath.isSameMonth(week[item.endCol], month) ? 1 : 0.45)
-                            .contentShape(Rectangle())
-                            .onTapGesture(coordinateSpace: .local) { location in
-                                let column = min(item.endCol, item.startCol + Int(location.x / width))
-                                selectedDate = week[column]
-                            }
-                            .onLongPressGesture { onEventLongPress(item.event) }
-                            .offset(x: CGFloat(item.startCol) * width + 2, y: top)
+                        let dayAt: (CGPoint) -> Date = { location in
+                            week[min(item.endCol, item.startCol + Int(location.x / width))]
+                        }
+                        EventChip(
+                            event: item.event,
+                            isMultiDay: item.isMultiDay,
+                            width: span * width - 4,
+                            height: GridMetrics.laneHeight - 2
+                        )
+                        .opacity(CalendarMath.isSameMonth(week[item.startCol], month) || CalendarMath.isSameMonth(week[item.endCol], month) ? 1 : 0.45)
+                        .contentShape(Rectangle())
+                        .onTapGesture(coordinateSpace: .local) { selectedDate = dayAt($0) }
+                        .simultaneousGesture(SpatialTapGesture(count: 2).onEnded { onDayDoubleTap(dayAt($0.location)) })
+                        .onLongPressGesture { onEventLongPress(item.event) }
+                        .offset(x: CGFloat(item.startCol) * width + 2, y: top)
                     }
                 }
             }
@@ -139,26 +148,26 @@ private struct DayCell: View {
                 Color.primary.opacity(0.07)
             }
 
-            // The selected underline rises behind the number so the number sits on top of it.
             Rectangle()
-                .fill(lineColor)
-                .frame(height: isSelected ? 3 : 1)
+                .fill(isSelected ? Color.brand : Color.dayLine)
+                .frame(height: 1)
                 .padding(.horizontal, 3)
-                .offset(y: isSelected ? 12 : 18)
+                .offset(y: 20)
 
+            // Today gets a filled circle over its number.
             Text("\(CalendarMath.day(day))")
                 .font(.system(size: 12, weight: .regular))
                 .monospacedDigit()
-                .foregroundStyle(Color.dayNumber(weekday: CalendarMath.weekday(day), isHoliday: isHoliday))
-                .padding(.leading, 5)
-                .padding(.top, 2)
+                .foregroundStyle(isToday ? Color.white : Color.dayNumber(weekday: CalendarMath.weekday(day), isHoliday: isHoliday))
+                .frame(minWidth: 18, minHeight: 18)
+                .background {
+                    if isToday { Circle().fill(Color.brand) }
+                }
+                .padding(.leading, 2)
+                .padding(.top, 1)
         }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .opacity(inMonth ? 1 : 0.35)
-    }
-
-    private var lineColor: Color {
-        if isToday { return .brand }
-        return isSelected ? .dayLineSelected : .dayLine
     }
 }
 
@@ -166,17 +175,20 @@ private struct DayCell: View {
 struct EventChip: View {
     let event: EKEvent
     let isMultiDay: Bool
+    let width: CGFloat
+    let height: CGFloat
 
     var body: some View {
         let filled = event.isAllDay
         let tinted = !filled && isMultiDay
+        // A fixed-width frame keeps the overflowing text inside its own day(s) so the clip below cuts it off.
         Text(event.displayTitle)
             .font(.system(size: 10, weight: .bold))
             .lineLimit(1)
             .fixedSize()
             .foregroundStyle(filled ? Color.white : event.color)
             .padding(.horizontal, filled || tinted ? 5 : 1)
-            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
+            .frame(width: width, height: height, alignment: .leading)
             .background {
                 if filled {
                     Capsule().fill(event.color)

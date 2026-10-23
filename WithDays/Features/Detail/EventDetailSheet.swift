@@ -6,6 +6,7 @@ struct EventDetailSheet: View {
     let event: EKEvent
 
     @Environment(CalendarStore.self) private var store
+    @Environment(TemplateStore.self) private var templates
     @Environment(\.dismiss) private var dismiss
 
     @State private var detent: PresentationDetent = .medium
@@ -14,6 +15,7 @@ struct EventDetailSheet: View {
     @State private var pendingAction: DateAction?
     @State private var spanRequest: SpanRequest?
     @State private var confirmDelete = false
+    @State private var savedAsTemplate = false
     @State private var errorMessage: String?
 
     var body: some View {
@@ -85,28 +87,41 @@ struct EventDetailSheet: View {
                 ToolbarItem(placement: .topBarTrailing) {
                     Button(role: .destructive, action: requestDelete) {
                         Image(systemName: "trash")
+                            .foregroundStyle(.red)
                     }
-                    .tint(.red)
                 }
             }
             .safeAreaInset(edge: .bottom) {
-                HStack(spacing: 12) {
-                    Button { dateAction = .move } label: {
-                        Label("移動", systemImage: "calendar.badge.clock")
-                            .frame(maxWidth: .infinity)
-                            .padding(.vertical, 6)
-                    }
-                    Button { dateAction = .duplicate } label: {
-                        Label("複製", systemImage: "plus.square.on.square")
-                            .frame(maxWidth: .infinity)
-                            .padding(.vertical, 6)
-                    }
+                HStack(spacing: 10) {
+                    actionButton("移動", icon: "calendar.badge.clock") { dateAction = .move }
+                    actionButton("複製", icon: "plus.square.on.square") { dateAction = .duplicate }
+                    actionButton(
+                        savedAsTemplate ? "登録しました" : "テンプレートに登録",
+                        icon: savedAsTemplate ? "checkmark" : "square.on.square.dashed",
+                        action: saveAsTemplate
+                    )
+                    .disabled(savedAsTemplate)
                 }
                 .buttonStyle(.glass)
-                .font(.system(size: 15, weight: .semibold))
+                .foregroundStyle(.primary)
                 .padding(.horizontal, 20)
                 .padding(.bottom, 8)
             }
+        }
+    }
+
+    private func actionButton(_ title: String, icon: String, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            VStack(spacing: 4) {
+                Image(systemName: icon)
+                    .font(.system(size: 17, weight: .semibold))
+                Text(title)
+                    .font(.system(size: 11, weight: .semibold))
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.8)
+            }
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, 4)
         }
     }
 
@@ -123,6 +138,12 @@ struct EventDetailSheet: View {
     }
 
     // MARK: Actions
+
+    /// Everything but the date becomes a template, ready to drag from the tray.
+    private func saveAsTemplate() {
+        templates.upsert(EventTemplate(draft: EventDraft(event: event)))
+        withAnimation { savedAsTemplate = true }
+    }
 
     private func requestDelete() {
         if event.hasRecurrenceRules {

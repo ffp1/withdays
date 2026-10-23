@@ -32,12 +32,13 @@ struct DayEventList: View {
                         Button(role: .destructive) { onDelete(event) } label: {
                             Label("削除", systemImage: "trash")
                         }
+                        .tint(.red)
                     }
                     .swipeActions(edge: .leading) {
                         Button { onEdit(event) } label: {
                             Label("編集", systemImage: "pencil")
                         }
-                        .tint(.brand)
+                        .tint(.gray)
                     }
             }
         }
@@ -52,7 +53,7 @@ private struct EventRow: View {
     let dayEnd: Date
 
     var body: some View {
-        HStack(alignment: .top, spacing: 10) {
+        HStack(alignment: .center, spacing: 10) {
             timeColumn
                 .frame(width: 42)
                 .frame(maxHeight: .infinity)
@@ -65,6 +66,7 @@ private struct EventRow: View {
             VStack(alignment: .leading, spacing: 2) {
                 Text(event.displayTitle)
                     .font(.system(size: 15, weight: .bold))
+                    .foregroundStyle(.primary)
                 if let location = event.location, !location.isEmpty {
                     detail(location, icon: "mappin.and.ellipse")
                 }
@@ -79,6 +81,10 @@ private struct EventRow: View {
                 }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
+
+            Image(systemName: "chevron.right")
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundStyle(.tertiary)
         }
         .fixedSize(horizontal: false, vertical: true)
         .padding(.vertical, 2)

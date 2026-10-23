@@ -80,11 +80,11 @@ enum Fmt {
         return formatter
     }
 
-    private static let monthTitleFormatter = make("yyyy年 M月")
+    private static let monthTitleFormatter = make("yyyy年M月")
     private static let fullDateFormatter = make("yyyy年M月d日(E)")
     private static let timeFormatter = make("H:mm")
 
-    /// 2026年 9月
+    /// 2026年9月
     static func monthTitle(_ date: Date) -> String { monthTitleFormatter.string(from: date) }
 
     /// 2026年10月26日(月)

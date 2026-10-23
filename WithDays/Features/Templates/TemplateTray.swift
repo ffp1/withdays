@@ -8,9 +8,60 @@ struct TemplateTray: View {
 
     @Environment(TemplateStore.self) private var templates
     @Environment(CalendarStore.self) private var store
+    @State private var dragOffset: CGFloat = 0
 
     var body: some View {
         VStack(spacing: 8) {
+            header
+                .contentShape(Rectangle())
+                .gesture(swipeToClose)
+
+            if templates.templates.isEmpty {
+                Spacer()
+                Text("＋でテンプレートを登録できます")
+                    .font(.system(size: 14))
+                    .foregroundStyle(.secondary)
+                Spacer()
+            } else {
+                Text("日付までドラッグすると予定になります")
+                    .font(.system(size: 12))
+                    .foregroundStyle(.secondary)
+                ScrollView {
+                    LazyVGrid(columns: [GridItem(.adaptive(minimum: 150), spacing: 10)], spacing: 10) {
+                        ForEach(templates.templates) { template in
+                            let color = color(for: template)
+                            TemplateChip(template: template, color: color)
+                                .draggable(TemplateTransfer.payload(template.id)) {
+                                    // Drag previews render outside the view tree, so no environment lookups in here.
+                                    TemplateChip(template: template, color: color)
+                                        .frame(width: 160)
+                                }
+                                .contextMenu {
+                                    Button("編集", systemImage: "pencil") { onEdit(template) }
+                                    Button("削除", systemImage: "trash", role: .destructive) {
+                                        templates.delete(id: template.id)
+                                    }
+                                }
+                        }
+                    }
+                    .padding(.horizontal, 14)
+                    .padding(.bottom, 16)
+                }
+            }
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .glassEffect(.regular, in: .rect(cornerRadius: 28))
+        .padding(.horizontal, 8)
+        .padding(.bottom, 4)
+        .offset(y: dragOffset)
+    }
+
+    private var header: some View {
+        VStack(spacing: 6) {
+            Capsule()
+                .fill(Color.secondary.opacity(0.5))
+                .frame(width: 36, height: 5)
+                .padding(.top, 6)
             HStack {
                 Button(action: onClose) {
                     Image(systemName: "xmark")
@@ -34,55 +85,33 @@ struct TemplateTray: View {
                 .buttonBorderShape(.circle)
             }
             .padding(.horizontal, 14)
-            .padding(.top, 12)
+        }
+    }
 
-            if templates.templates.isEmpty {
-                Spacer()
-                Text("＋でテンプレートを登録できます")
-                    .font(.system(size: 14))
-                    .foregroundStyle(.secondary)
-                Spacer()
-            } else {
-                Text("日付までドラッグすると予定になります")
-                    .font(.system(size: 12))
-                    .foregroundStyle(.secondary)
-                ScrollView {
-                    LazyVGrid(columns: [GridItem(.adaptive(minimum: 150), spacing: 10)], spacing: 10) {
-                        ForEach(templates.templates) { template in
-                            TemplateChip(template: template)
-                                .draggable(TemplateTransfer.payload(template.id)) {
-                                    TemplateChip(template: template)
-                                        .frame(width: 160)
-                                }
-                                .contextMenu {
-                                    Button("編集", systemImage: "pencil") { onEdit(template) }
-                                    Button("削除", systemImage: "trash", role: .destructive) {
-                                        templates.delete(id: template.id)
-                                    }
-                                }
-                        }
-                    }
-                    .padding(.horizontal, 14)
-                    .padding(.bottom, 16)
+    /// Pull the tray down by its header to close it.
+    private var swipeToClose: some Gesture {
+        DragGesture(minimumDistance: 8)
+            .onChanged { value in
+                dragOffset = max(0, value.translation.height)
+            }
+            .onEnded { value in
+                if value.translation.height > 80 || value.predictedEndTranslation.height > 220 {
+                    onClose()
+                } else {
+                    withAnimation(.snappy) { dragOffset = 0 }
                 }
             }
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .glassEffect(.regular, in: .rect(cornerRadius: 28))
-        .padding(.horizontal, 8)
-        .padding(.bottom, 4)
+    }
+
+    private func color(for template: EventTemplate) -> Color {
+        guard let cgColor = (store.calendar(id: template.draft.calendarID) ?? store.defaultCalendar)?.cgColor else { return .gray }
+        return Color(cgColor: cgColor)
     }
 }
 
 private struct TemplateChip: View {
     let template: EventTemplate
-
-    @Environment(CalendarStore.self) private var store
-
-    private var color: Color {
-        guard let cgColor = (store.calendar(id: template.draft.calendarID) ?? store.defaultCalendar)?.cgColor else { return .gray }
-        return Color(cgColor: cgColor)
-    }
+    let color: Color
 
     private var timeText: String {
         let draft = template.draft
@@ -98,6 +127,7 @@ private struct TemplateChip: View {
             VStack(alignment: .leading, spacing: 1) {
                 Text(template.draft.title)
                     .font(.system(size: 14, weight: .bold))
+                    .foregroundStyle(.primary)
                     .lineLimit(1)
                 Text(timeText)
                     .font(.system(size: 11))
