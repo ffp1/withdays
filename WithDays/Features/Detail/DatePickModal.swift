@@ -79,6 +79,8 @@ struct DatePickModal: View {
                         Image(systemName: "checkmark")
                     }
                     .disabled(selection.isEmpty)
+                    .buttonStyle(.glassProminent)
+                    .tint(.brand)
                 }
             }
         }

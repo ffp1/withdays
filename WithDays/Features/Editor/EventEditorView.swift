@@ -152,6 +152,8 @@ struct EventEditorView: View {
                 ToolbarItem(placement: .confirmationAction) {
                     Button(action: save) { Image(systemName: "checkmark") }
                         .disabled(!canSave)
+                        .buttonStyle(.glassProminent)
+                        .tint(.brand)
                 }
             }
             .navigationDestination(for: EditorPath.self) { route in

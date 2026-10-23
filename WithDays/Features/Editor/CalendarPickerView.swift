@@ -89,6 +89,8 @@ struct NewCalendarView: View {
             ToolbarItem(placement: .confirmationAction) {
                 Button(action: create) { Image(systemName: "checkmark") }
                     .disabled(title.trimmingCharacters(in: .whitespaces).isEmpty)
+                    .buttonStyle(.glassProminent)
+                    .tint(.brand)
             }
         }
         .onAppear { titleFocused = true }
