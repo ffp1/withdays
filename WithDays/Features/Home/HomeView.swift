@@ -197,7 +197,7 @@ struct HomeView: View {
 
     private var thisMonthButton: some View {
         Button(action: backToThisMonth) {
-            Image(systemName: "arrow.shape.turn.up.left.fill")
+            Image(systemName: "arrow.uturn.left")
                 .font(.system(size: 20, weight: .semibold))
                 .foregroundStyle(.primary)
                 .frame(width: 56, height: 56)
