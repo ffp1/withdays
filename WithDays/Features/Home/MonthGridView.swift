@@ -181,20 +181,19 @@ private struct DayCell: View {
                         .scaleEffect(value.scale)
                         .rotationEffect(.degrees(value.angle))
                 } keyframes: { _ in
-                    // Whole thing stays under 0.5 s.
+                    // A quick burst: about 0.33 s in total.
                     KeyframeTrack(\.scale) {
-                        SpringKeyframe(1.7, duration: 0.12, spring: .bouncy)
-                        LinearKeyframe(1.7, duration: 0.2)
-                        SpringKeyframe(1.0, duration: 0.16, spring: .bouncy)
+                        SpringKeyframe(1.7, duration: 0.08, spring: .snappy)
+                        LinearKeyframe(1.7, duration: 0.1)
+                        SpringKeyframe(1.0, duration: 0.15, spring: .snappy)
                     }
                     KeyframeTrack(\.angle) {
-                        LinearKeyframe(0, duration: 0.1)
                         LinearKeyframe(-14, duration: 0.05)
-                        LinearKeyframe(14, duration: 0.06)
-                        LinearKeyframe(-12, duration: 0.06)
-                        LinearKeyframe(12, duration: 0.06)
-                        LinearKeyframe(-6, duration: 0.06)
-                        LinearKeyframe(0, duration: 0.06)
+                        LinearKeyframe(14, duration: 0.05)
+                        LinearKeyframe(-12, duration: 0.05)
+                        LinearKeyframe(12, duration: 0.05)
+                        LinearKeyframe(-6, duration: 0.05)
+                        LinearKeyframe(0, duration: 0.05)
                     }
                 }
                 .padding(.leading, 2)

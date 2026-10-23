@@ -6,3 +6,4 @@ DerivedData/
 Payload/
 *.ipa
 xcuserdata/
+WithDaysWidget/Info.plist

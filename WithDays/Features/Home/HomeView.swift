@@ -98,6 +98,7 @@ struct HomeView: View {
         .sensoryFeedback(.impact(weight: .heavy), trigger: todayPulse)
         .spanDialog($spanRequest)
         .errorAlert($errorMessage)
+        .onOpenURL(perform: open)
     }
 
     // MARK: Pieces
@@ -238,6 +239,18 @@ struct HomeView: View {
         }
         scroll(to: 0)
         selectedDate = today
+    }
+
+    /// A day tapped in the widget: close whatever is open and focus that day.
+    private func open(_ url: URL) {
+        guard let day = DeepLink.day(from: url) else { return }
+        path.removeAll()
+        editor = nil
+        detail = nil
+        showMonthPicker = false
+        withAnimation(.snappy) { showTemplates = false }
+        jump(to: day)
+        selectedDate = day
     }
 
     private func delete(_ event: EKEvent) {

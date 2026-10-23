@@ -71,6 +71,28 @@ enum CalendarMath {
     }
 }
 
+/// withdays://day/2026-10-26 opens the app on that day (used by the widget).
+enum DeepLink {
+    static let scheme = "withdays"
+
+    private static let formatter: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.calendar = CalendarMath.calendar
+        formatter.dateFormat = "yyyy-MM-dd"
+        return formatter
+    }()
+
+    static func url(for day: Date) -> URL {
+        URL(string: "\(scheme)://day/\(formatter.string(from: day))")!
+    }
+
+    static func day(from url: URL) -> Date? {
+        guard url.scheme == scheme, url.host == "day" else { return nil }
+        return formatter.date(from: url.lastPathComponent).map(CalendarMath.startOfDay)
+    }
+}
+
 enum Fmt {
     private static func make(_ format: String) -> DateFormatter {
         let formatter = DateFormatter()

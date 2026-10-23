@@ -32,6 +32,12 @@ targets:
         NSCalendarsFullAccessUsageDescription: Appleのカレンダーの予定を表示・追加・編集するために使います。
         NSCalendarsUsageDescription: Appleのカレンダーの予定を表示・追加・編集するために使います。
         NSCalendarsWriteOnlyAccessUsageDescription: Appleのカレンダーに予定を追加するために使います。
+        CFBundleURLTypes:
+          - CFBundleURLName: com.ffuime.withdays
+            CFBundleURLSchemes:
+              - withdays
+    dependencies:
+      - target: WithDaysWidget
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.ffuime.withdays
@@ -41,4 +47,31 @@ targets:
         ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME: AccentColor
         GENERATE_INFOPLIST_FILE: NO
         ENABLE_PREVIEWS: YES
+        CODE_SIGN_STYLE: Automatic
+
+  WithDaysWidget:
+    type: app-extension
+    platform: iOS
+    sources:
+      - path: WithDaysWidget
+      # Date math, colors and deep links are shared with the app.
+      - path: WithDays/Support/Formatting.swift
+      - path: WithDays/Support/Theme.swift
+    info:
+      path: WithDaysWidget/Info.plist
+      properties:
+        CFBundleDisplayName: WithDays
+        CFBundleShortVersionString: $(MARKETING_VERSION)
+        CFBundleVersion: $(CURRENT_PROJECT_VERSION)
+        CFBundleDevelopmentRegion: ja
+        NSExtension:
+          NSExtensionPointIdentifier: com.apple.widgetkit-extension
+        NSCalendarsFullAccessUsageDescription: ウィジェットに今週の予定を表示するために使います。
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.ffuime.withdays.widget
+        PRODUCT_NAME: WithDaysWidget
+        TARGETED_DEVICE_FAMILY: "1"
+        GENERATE_INFOPLIST_FILE: NO
+        SKIP_INSTALL: YES
         CODE_SIGN_STYLE: Automatic

@@ -1,5 +1,6 @@
 import EventKit
 import SwiftUI
+import WidgetKit
 
 enum CalendarAccess {
     case undetermined, granted, denied
@@ -86,6 +87,7 @@ final class CalendarStore {
         holidayCache.removeAll()
         historyCache = nil
         revision += 1
+        WidgetCenter.shared.reloadAllTimelines()
     }
 
     // MARK: Calendars
