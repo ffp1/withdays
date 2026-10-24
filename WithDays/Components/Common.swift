@@ -78,20 +78,10 @@ struct CheckMark: View {
     }
 }
 
-/// While a finger is on this view, `locked` is true; pagers use it to stay put so the row gets the swipe.
-/// A SwiftUI drag gesture here would swallow the List's swipe actions, so this watches touches with a
-/// UIKit recognizer that never blocks or delays anything else.
-private struct PagerLock: ViewModifier {
-    @Binding var locked: Bool
-
-    func body(content: Content) -> some View {
-        content.gesture(TouchWatcher { locked = $0 })
-    }
-}
-
-private struct TouchWatcher: UIGestureRecognizerRepresentable {
-    var onChange: (Bool) -> Void
-
+/// Touches that start on this view never page a horizontal pager around it (rows keep their swipe actions,
+/// lists still scroll vertically). It works at the UIKit level: the pager's pan must wait for this
+/// recognizer to fail, and it doesn't fail until the finger lifts.
+private struct PagerBlocker: UIGestureRecognizerRepresentable {
     func makeUIGestureRecognizer(context: Context) -> TouchWatchRecognizer {
         let recognizer = TouchWatchRecognizer()
         recognizer.cancelsTouchesInView = false
@@ -101,13 +91,7 @@ private struct TouchWatcher: UIGestureRecognizerRepresentable {
         return recognizer
     }
 
-    func handleUIGestureRecognizerAction(_ recognizer: TouchWatchRecognizer, context: Context) {
-        switch recognizer.state {
-        case .began: onChange(true)
-        case .ended, .cancelled, .failed: onChange(false)
-        default: break
-        }
-    }
+    func handleUIGestureRecognizerAction(_ recognizer: TouchWatchRecognizer, context: Context) {}
 
     func makeCoordinator(converter: CoordinateSpaceConverter) -> Coordinator {
         Coordinator()
@@ -117,10 +101,17 @@ private struct TouchWatcher: UIGestureRecognizerRepresentable {
         func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer, shouldRecognizeSimultaneouslyWith other: UIGestureRecognizer) -> Bool {
             true
         }
+
+        /// Only a horizontal pager's pan has to wait; vertical lists and swipe actions are untouched.
+        func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer, shouldBeRequiredToFailBy other: UIGestureRecognizer) -> Bool {
+            guard let scrollView = other.view as? UIScrollView, other === scrollView.panGestureRecognizer else { return false }
+            return scrollView.contentSize.width > scrollView.bounds.width + 1
+                && scrollView.contentSize.height <= scrollView.bounds.height + 1
+        }
     }
 }
 
-/// Reports touch-down and lift-off only.
+/// Recognizes on touch-down and ends on lift-off.
 final class TouchWatchRecognizer: UIGestureRecognizer {
     override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent) {
         state = .began
@@ -136,7 +127,7 @@ final class TouchWatchRecognizer: UIGestureRecognizer {
 }
 
 extension View {
-    func locksPager(_ locked: Binding<Bool>) -> some View {
-        modifier(PagerLock(locked: locked))
+    func blocksPager() -> some View {
+        gesture(PagerBlocker())
     }
 }

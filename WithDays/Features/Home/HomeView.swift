@@ -28,8 +28,6 @@ struct HomeView: View {
     @State private var dayOverrides: [Int: Int] = [:]
     /// Set when a double tap lands while an event sheet is opening: close it, then open a new event.
     @State private var newEventAfterDetail = false
-    /// A finger is on a day-list row: the day pager must not take the swipe.
-    @State private var rowTouching = false
     /// During a long jump the neighbouring page temporarily shows the target month, so the scroll covers one page.
     @State private var pageMonths: [Int: Int] = [:]
     @State private var selectedDate: Date
@@ -210,8 +208,7 @@ struct HomeView: View {
                         onEdit: { openEditor(.edit($0)) },
                         onDelete: delete,
                         onRelocate: startRelocation,
-                        onAdd: { openEditor(.new) },
-                        pagerLocked: $rowTouching
+                        onAdd: { openEditor(.new) }
                     )
                     .containerRelativeFrame([.horizontal, .vertical])
                 }
@@ -221,7 +218,6 @@ struct HomeView: View {
         .scrollTargetBehavior(.paging)
         .scrollIndicators(.hidden)
         .scrollPosition(id: $dayPage)
-        .scrollDisabled(rowTouching)
         .onChange(of: dayPage) { _, new in
             // Swiped to another day: select it, and follow it into its month.
             guard let new else { return }
@@ -354,6 +350,14 @@ struct HomeView: View {
         .padding(.horizontal, 16)
         .padding(.vertical, 6)
         .background(Color(.secondarySystemBackground))
+        // The band also pages the day.
+        .contentShape(Rectangle())
+        .gesture(
+            DragGesture(minimumDistance: 20).onEnded { value in
+                guard abs(value.translation.width) > abs(value.translation.height), abs(value.translation.width) > 40 else { return }
+                selectedDate = CalendarMath.addDays(value.translation.width < 0 ? 1 : -1, to: selectedDate)
+            }
+        )
     }
 
     @ViewBuilder
