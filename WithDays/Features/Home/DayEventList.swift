@@ -8,6 +8,8 @@ struct DayEventList: View {
     var onDelete: (EKEvent) -> Void
     var onRelocate: (EKEvent, RelocationKind) -> Void
     var onAdd: () -> Void
+    /// True while a finger is on an event row, so the day pager leaves the swipe to the row.
+    @Binding var pagerLocked: Bool
 
     @Environment(CalendarStore.self) private var store
 
@@ -26,6 +28,7 @@ struct DayEventList: View {
                     .listRowSeparator(event == events.first ? .hidden : .visible, edges: .top)
                     .contentShape(Rectangle())
                     .onTapGesture { onEdit(event) }
+                    .locksPager($pagerLocked)
                     .swipeActions(edge: .trailing) {
                         Button(role: .destructive) { onDelete(event) } label: {
                             Image(systemName: "trash")
@@ -62,6 +65,7 @@ struct DayEventList: View {
                 .listRowSeparator(events.isEmpty ? .hidden : .visible, edges: .top)
         }
         .listStyle(.plain)
+        .contentMargins(.top, 8, for: .scrollContent)
         // Just enough to scroll the last row clear of the bottom buttons.
         .contentMargins(.bottom, 80, for: .scrollContent)
     }

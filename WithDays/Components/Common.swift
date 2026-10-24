@@ -75,3 +75,24 @@ struct CheckMark: View {
             .foregroundStyle(Color.brand)
     }
 }
+
+/// While a finger is on this view, `locked` is true; pagers use it to stay put so the row gets the swipe.
+/// `@GestureState` resets on its own even when the system cancels the touch.
+private struct PagerLock: ViewModifier {
+    @Binding var locked: Bool
+    @GestureState private var touching = false
+
+    func body(content: Content) -> some View {
+        content
+            .simultaneousGesture(
+                DragGesture(minimumDistance: 0).updating($touching) { _, state, _ in state = true }
+            )
+            .onChange(of: touching) { _, new in locked = new }
+    }
+}
+
+extension View {
+    func locksPager(_ locked: Binding<Bool>) -> some View {
+        modifier(PagerLock(locked: locked))
+    }
+}

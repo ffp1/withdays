@@ -26,6 +26,8 @@ struct HomeView: View {
     @State private var dayPage: Int?
     /// Set when a double tap lands while an event sheet is opening: close it, then open a new event.
     @State private var newEventAfterDetail = false
+    /// A finger is on a day-list row: the day pager must not take the swipe.
+    @State private var rowTouching = false
     /// During a long jump the neighbouring page temporarily shows the target month, so the scroll covers one page.
     @State private var pageMonths: [Int: Int] = [:]
     @State private var selectedDate: Date
@@ -121,7 +123,8 @@ struct HomeView: View {
             let target = CalendarMath.days(from: baseDay, to: new)
             guard target != dayPage else { return }
             if let current = dayPage, abs(target - current) == 1 {
-                withAnimation(.easeOut(duration: 0.5)) { dayPage = target }
+                // A quick, fairly sharp ease-out.
+                withAnimation(.timingCurve(0.16, 1, 0.3, 1, duration: 0.3)) { dayPage = target }
             } else {
                 dayPage = target
             }
@@ -192,7 +195,8 @@ struct HomeView: View {
                         onEdit: { openEditor(.edit($0)) },
                         onDelete: delete,
                         onRelocate: startRelocation,
-                        onAdd: { openEditor(.new) }
+                        onAdd: { openEditor(.new) },
+                        pagerLocked: $rowTouching
                     )
                     .containerRelativeFrame([.horizontal, .vertical])
                 }
@@ -202,6 +206,7 @@ struct HomeView: View {
         .scrollTargetBehavior(.paging)
         .scrollIndicators(.hidden)
         .scrollPosition(id: $dayPage)
+        .scrollDisabled(rowTouching)
         .onChange(of: dayPage) { _, new in
             // Swiped to another day: select it, and follow it into its month.
             guard let new else { return }

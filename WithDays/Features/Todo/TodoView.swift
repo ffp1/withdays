@@ -72,6 +72,8 @@ private struct TodoContent: View {
     /// The category page the pager shows.
     @State private var page: String?
     @State private var deletePulse = 0
+    /// A finger is on a row: the category pager must not take the swipe.
+    @State private var rowTouching = false
     @State private var completedPulse = 0
     @State private var categorySheet: CategorySheet?
     @State private var errorMessage: String?
@@ -106,6 +108,7 @@ private struct TodoContent: View {
             .scrollTargetBehavior(.paging)
             .scrollIndicators(.hidden)
             .scrollPosition(id: $page)
+            .scrollDisabled(rowTouching)
             .onAppear { page = listID }
             .onChange(of: page) { _, new in
                 if let new, new != todos.selectedListID { todos.selectedListID = new }
@@ -194,6 +197,7 @@ private struct TodoContent: View {
                         onToggle: { toggle(item) }, onFold: {}, onTap: {}, onIndent: {}, onOutdent: {}
                     )
                     .swipeActions(edge: .trailing) { deleteButton(item.id) }
+                    .locksPager($rowTouching)
                     .transition(.move(edge: .bottom).combined(with: .opacity))
                 }
             } else {
@@ -220,6 +224,7 @@ private struct TodoContent: View {
                     .swipeActions(edge: .trailing) {
                         if !editing { deleteButton(row.id) }
                     }
+                    .locksPager($rowTouching)
                     .transition(.move(edge: .top).combined(with: .opacity))
                 }
                 if isCurrent, editingID == Self.newID {
@@ -231,6 +236,7 @@ private struct TodoContent: View {
                         onToggle: {}, onFold: {}, onTap: {}, onIndent: indentEditing, onOutdent: outdentEditing
                     )
                     .listRowSeparator(.hidden)
+                    .locksPager($rowTouching)
                     .transition(.opacity.combined(with: .move(edge: .top)))
                 }
             }
