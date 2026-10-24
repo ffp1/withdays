@@ -19,8 +19,8 @@ struct HomeView: View {
     private let baseMonth = CalendarMath.startOfMonth(.now)
 
     @State private var page: Int?
-    /// Normally every page; during a long jump only the two months involved, so the scroll covers one month.
-    @State private var pageIDs = Array(HomeView.pageRange)
+    /// During a long jump the neighbouring page temporarily shows the target month, so the scroll covers one page.
+    @State private var pageMonths: [Int: Int] = [:]
     @State private var selectedDate: Date
     @State private var path: [HomeRoute] = []
     @State private var showMonthPicker = false
@@ -47,7 +47,8 @@ struct HomeView: View {
     private var isTodo: Bool { mode == HomeMode.todo.rawValue }
 
     private var displayedMonth: Date {
-        CalendarMath.addMonths(page ?? 0, to: baseMonth)
+        let id = page ?? 0
+        return CalendarMath.addMonths(pageMonths[id] ?? id, to: baseMonth)
     }
 
     var body: some View {
@@ -186,9 +187,9 @@ struct HomeView: View {
     private var monthPager: some View {
         ScrollView(.horizontal) {
             LazyHStack(spacing: 0) {
-                ForEach(pageIDs, id: \.self) { offset in
+                ForEach(Self.pageRange, id: \.self) { id in
                     MonthGridView(
-                        month: CalendarMath.addMonths(offset, to: baseMonth),
+                        month: CalendarMath.addMonths(pageMonths[id] ?? id, to: baseMonth),
                         selectedDate: selectedDate,
                         relocation: relocation,
                         actions: gridActions
@@ -355,20 +356,26 @@ struct HomeView: View {
         scroll(to: min(max(offset, Self.pageRange.lowerBound), Self.pageRange.upperBound))
     }
 
-    /// For a jump of more than one month, only the two months stay in the pager while it scrolls,
-    /// so the animation covers a single page; the full range comes back afterwards.
+    /// For a jump of more than one month, the page next to the current one shows the target month,
+    /// the pager scrolls that single page, then it silently swaps to the target's real page.
     private func scroll(to target: Int) {
         let current = page ?? 0
         guard target != current else { return }
-        if abs(target - current) > 1 {
-            pageIDs = target > current ? [current, target] : [target, current]
-            Task { @MainActor in
-                withAnimation(.snappy(duration: 0.35)) { page = target }
-                try? await Task.sleep(for: .milliseconds(450))
-                pageIDs = Array(Self.pageRange)
-            }
-        } else {
+        guard abs(target - current) > 1 else {
             withAnimation(.snappy) { page = target }
+            return
+        }
+        let neighbor = current + (target > current ? 1 : -1)
+        pageMonths = [neighbor: target]
+        withAnimation(.snappy(duration: 0.35)) { page = neighbor }
+        Task { @MainActor in
+            try? await Task.sleep(for: .milliseconds(420))
+            var transaction = Transaction()
+            transaction.disablesAnimations = true
+            withTransaction(transaction) {
+                page = target
+                pageMonths = [:]
+            }
         }
     }
 
