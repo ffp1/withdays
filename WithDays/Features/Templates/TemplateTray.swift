@@ -1,14 +1,20 @@
 import SwiftUI
+import UniformTypeIdentifiers
 
 /// Rises over the day list on a long press in an empty part of the calendar; drag a template onto a day.
 struct TemplateTray: View {
     var onClose: () -> Void
     var onAdd: () -> Void
     var onEdit: (EventTemplate) -> Void
+    /// True while a template is being dragged, so the outside-tap catcher steps aside for the calendar.
+    @Binding var isDragging: Bool
 
     @Environment(TemplateStore.self) private var templates
     @Environment(CalendarStore.self) private var store
     @State private var dragOffset: CGFloat = 0
+    @State private var selecting = false
+    @State private var selection: Set<UUID> = []
+    @State private var draggingID: UUID?
 
     var body: some View {
         VStack(spacing: 8) {
@@ -16,37 +22,15 @@ struct TemplateTray: View {
                 .contentShape(Rectangle())
                 .gesture(swipeToClose)
 
-            if templates.templates.isEmpty {
-                Spacer()
-                Text("＋でテンプレートを登録できます")
-                    .font(.system(size: 14))
-                    .foregroundStyle(.secondary)
-                Spacer()
-            } else {
-                Text("日付までドラッグすると予定になります")
-                    .font(.system(size: 12))
-                    .foregroundStyle(.secondary)
-                ScrollView {
-                    LazyVGrid(columns: [GridItem(.adaptive(minimum: 150), spacing: 10)], spacing: 10) {
-                        ForEach(templates.templates) { template in
-                            let color = color(for: template)
-                            TemplateChip(template: template, color: color)
-                                .draggable(TemplateTransfer.payload(template.id)) {
-                                    // Drag previews render outside the view tree, so no environment lookups in here.
-                                    TemplateChip(template: template, color: color)
-                                        .frame(width: 160)
-                                }
-                                .contextMenu {
-                                    Button("編集", systemImage: "pencil") { onEdit(template) }
-                                    Button("削除", systemImage: "trash", role: .destructive) {
-                                        templates.delete(id: template.id)
-                                    }
-                                }
-                        }
+            ScrollView {
+                LazyVGrid(columns: [GridItem(.adaptive(minimum: 150), spacing: 10)], spacing: 10) {
+                    ForEach(templates.templates) { template in
+                        chip(template)
                     }
-                    .padding(.horizontal, 14)
-                    .padding(.bottom, 16)
                 }
+                .padding(.horizontal, 14)
+                .padding(.bottom, 16)
+                .animation(.snappy, value: templates.templates.map(\.id))
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -62,43 +46,82 @@ struct TemplateTray: View {
                 .fill(Color.secondary.opacity(0.5))
                 .frame(width: 36, height: 5)
                 .padding(.top, 6)
-            HStack {
-                Button(action: onClose) {
-                    Image(systemName: "xmark")
-                        .font(.system(size: 15, weight: .semibold))
-                        .frame(width: 30, height: 30)
-                }
-                .buttonStyle(.glass)
-                .buttonBorderShape(.circle)
-
+            HStack(spacing: 8) {
+                circleButton("xmark", action: onClose)
                 Spacer()
                 Text("テンプレート")
                     .font(.system(size: 16, weight: .bold))
                 Spacer()
-
-                Button(action: onAdd) {
-                    Image(systemName: "plus")
-                        .font(.system(size: 15, weight: .semibold))
-                        .frame(width: 30, height: 30)
+                circleButton(selecting ? "checkmark.circle.fill" : "checkmark.circle") {
+                    withAnimation(.snappy) {
+                        selecting.toggle()
+                        selection.removeAll()
+                    }
                 }
-                .buttonStyle(.glass)
-                .buttonBorderShape(.circle)
+                if selecting {
+                    circleButton("trash", tint: .red, action: deleteSelection)
+                        .disabled(selection.isEmpty)
+                } else {
+                    circleButton("plus", action: onAdd)
+                }
             }
             .padding(.horizontal, 14)
         }
     }
 
-    /// Pull the tray down by its header to close it.
+    private func circleButton(_ icon: String, tint: Color = .primary, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Image(systemName: icon)
+                .font(.system(size: 15, weight: .semibold))
+                .foregroundStyle(tint)
+                .frame(width: 30, height: 30)
+        }
+        .buttonStyle(.glass)
+        .buttonBorderShape(.circle)
+    }
+
+    private func chip(_ template: EventTemplate) -> some View {
+        let color = color(for: template)
+        return TemplateChip(template: template, color: color, selecting: selecting, selected: selection.contains(template.id))
+            .onTapGesture {
+                if selecting {
+                    if selection.contains(template.id) { selection.remove(template.id) } else { selection.insert(template.id) }
+                } else {
+                    onEdit(template)
+                }
+            }
+            .onDrag {
+                draggingID = template.id
+                isDragging = true
+                return NSItemProvider(object: TemplateTransfer.payload(template.id) as NSString)
+            } preview: {
+                // Drag previews render outside the view tree, so no environment lookups in here.
+                TemplateChip(template: template, color: color, selecting: false, selected: false)
+                    .frame(width: 160)
+            }
+            // Dragging over another template reorders the tray.
+            .onDrop(of: [.plainText], delegate: ReorderDelegate(target: template.id, draggingID: $draggingID, isDragging: $isDragging, templates: templates))
+    }
+
+    private func deleteSelection() {
+        withAnimation(.snappy) {
+            for id in selection { templates.delete(id: id) }
+            selection.removeAll()
+            selecting = false
+        }
+    }
+
+    /// Pull the tray down by its header to close it. Global coordinates keep the drag steady while the tray moves.
     private var swipeToClose: some Gesture {
-        DragGesture(minimumDistance: 8)
+        DragGesture(minimumDistance: 4, coordinateSpace: .global)
             .onChanged { value in
                 dragOffset = max(0, value.translation.height)
             }
             .onEnded { value in
-                if value.translation.height > 80 || value.predictedEndTranslation.height > 220 {
+                if value.translation.height > 60 || value.predictedEndTranslation.height > 160 {
                     onClose()
                 } else {
-                    withAnimation(.snappy) { dragOffset = 0 }
+                    withAnimation(.snappy(duration: 0.25)) { dragOffset = 0 }
                 }
             }
     }
@@ -109,9 +132,38 @@ struct TemplateTray: View {
     }
 }
 
+private struct ReorderDelegate: DropDelegate {
+    let target: UUID
+    @Binding var draggingID: UUID?
+    @Binding var isDragging: Bool
+    let templates: TemplateStore
+
+    func dropEntered(info: DropInfo) {
+        guard let draggingID, draggingID != target,
+              let from = templates.templates.firstIndex(where: { $0.id == draggingID }),
+              let to = templates.templates.firstIndex(where: { $0.id == target })
+        else { return }
+        withAnimation(.snappy) {
+            templates.move(from: IndexSet(integer: from), to: to > from ? to + 1 : to)
+        }
+    }
+
+    func dropUpdated(info: DropInfo) -> DropProposal? {
+        DropProposal(operation: .move)
+    }
+
+    func performDrop(info: DropInfo) -> Bool {
+        draggingID = nil
+        isDragging = false
+        return true
+    }
+}
+
 private struct TemplateChip: View {
     let template: EventTemplate
     let color: Color
+    let selecting: Bool
+    let selected: Bool
 
     private var timeText: String {
         let draft = template.draft
@@ -121,6 +173,11 @@ private struct TemplateChip: View {
 
     var body: some View {
         HStack(spacing: 8) {
+            if selecting {
+                Image(systemName: selected ? "checkmark.circle.fill" : "circle")
+                    .font(.system(size: 18))
+                    .foregroundStyle(selected ? Color.brand : Color.secondary)
+            }
             RoundedRectangle(cornerRadius: 2)
                 .fill(color)
                 .frame(width: 4)
@@ -141,5 +198,6 @@ private struct TemplateChip: View {
         .frame(maxWidth: .infinity)
         .background(Color(.secondarySystemBackground), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
         .contentShape(.dragPreview, RoundedRectangle(cornerRadius: 14, style: .continuous))
+        .contentShape(Rectangle())
     }
 }

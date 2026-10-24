@@ -9,19 +9,45 @@ enum GridMetrics {
     static let laneTop: CGFloat = 23
     static let laneHeight: CGFloat = 15
     static var height: CGFloat { weekdayHeight + rowHeight * 6 }
+    /// The today circle is 18pt; the day background's corners follow it.
+    static let cornerRadius: CGFloat = 10
+    static let longPress: Double = 0.5
+}
+
+enum RelocationKind {
+    case move, duplicate
+}
+
+/// Moving or duplicating an event by picking days straight on the calendar.
+struct Relocation: Equatable {
+    let event: EKEvent
+    let kind: RelocationKind
+    var targets: Set<Date> = []
+}
+
+/// Everything the grid reports back to the home screen.
+struct GridActions {
+    var onDayTap: (Date) -> Void
+    var onDayDoubleTap: (Date) -> Void
+    var onDayLongPress: (Date) -> Void
+    var onEventTap: (EKEvent, Date) -> Void
+    var onEventLongPress: (EKEvent) -> Void
+    var onTemplateDrop: (UUID, Date) -> Void
+    /// Relocation: a tap toggles (duplicate) or sets (move) the target; a drag paints targets.
+    var onTargetTap: (Date) -> Void
+    var onTargetDrag: (Date) -> Void
 }
 
 /// One month: weekday header plus six week rows.
 struct MonthGridView: View {
     let month: Date
-    @Binding var selectedDate: Date
-    var onEventLongPress: (EKEvent) -> Void
-    var onEmptyLongPress: (Date) -> Void
-    var onDayDoubleTap: (Date) -> Void
-    var onTemplateDrop: (UUID, Date) -> Void
+    let selectedDate: Date
+    let relocation: Relocation?
+    let actions: GridActions
 
     @Environment(CalendarStore.self) private var store
-    @AppStorage(SettingsKey.weekStart) private var weekStart = 1
+    @AppStorage(SettingsKey.weekStart, store: AppGroup.defaults) private var weekStart = 1
+    @State private var width: CGFloat = 0
 
     var body: some View {
         let days = CalendarMath.gridDays(for: month, weekStart: weekStart)
@@ -36,16 +62,26 @@ struct MonthGridView: View {
                 WeekRow(
                     week: week,
                     month: month,
-                    placed: WeekLayout.place(events, in: week),
+                    placed: WeekLayout.place(events, in: week, relocation: relocation),
                     holidays: holidays,
-                    selectedDate: $selectedDate,
-                    onEventLongPress: onEventLongPress,
-                    onEmptyLongPress: onEmptyLongPress,
-                    onDayDoubleTap: onDayDoubleTap,
-                    onTemplateDrop: onTemplateDrop
+                    selectedDate: selectedDate,
+                    relocation: relocation,
+                    actions: actions
                 )
             }
         }
+        .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { width = $0 }
+        // While relocating, dragging across the grid paints target days.
+        .gesture(
+            DragGesture(minimumDistance: 8).onChanged { value in
+                guard width > 0 else { return }
+                let row = Int((value.location.y - GridMetrics.weekdayHeight) / GridMetrics.rowHeight)
+                let column = Int(value.location.x / (width / 7))
+                guard (0..<6).contains(row), (0..<7).contains(column) else { return }
+                actions.onTargetDrag(days[row * 7 + column])
+            },
+            including: relocation == nil ? .subviews : .all
+        )
     }
 }
 
@@ -70,11 +106,9 @@ private struct WeekRow: View {
     let month: Date
     let placed: [PlacedEvent]
     let holidays: Set<Date>
-    @Binding var selectedDate: Date
-    var onEventLongPress: (EKEvent) -> Void
-    var onEmptyLongPress: (Date) -> Void
-    var onDayDoubleTap: (Date) -> Void
-    var onTemplateDrop: (UUID, Date) -> Void
+    let selectedDate: Date
+    let relocation: Relocation?
+    let actions: GridActions
 
     @State private var dropColumn: Int?
 
@@ -88,15 +122,13 @@ private struct WeekRow: View {
                             day: day,
                             inMonth: CalendarMath.isSameMonth(day, month),
                             isHoliday: holidays.contains(day),
-                            isSelected: CalendarMath.isSameDay(day, selectedDate),
+                            isSelected: relocation == nil ? CalendarMath.isSameDay(day, selectedDate) : relocation?.targets.contains(day) == true,
                             isToday: CalendarMath.isSameDay(day, .now),
-                            isDropTarget: dropColumn == index
+                            isDropTarget: dropColumn == index,
+                            relocating: relocation != nil,
+                            actions: actions
                         )
                         .frame(width: width, height: GridMetrics.rowHeight, alignment: .topLeading)
-                        .contentShape(Rectangle())
-                        .onTapGesture { selectedDate = day }
-                        .simultaneousGesture(TapGesture(count: 2).onEnded { onDayDoubleTap(day) })
-                        .onLongPressGesture { onEmptyLongPress(day) }
                         .zIndex(CalendarMath.isSameDay(day, .now) ? 1 : 0)
                     }
                 }
@@ -109,27 +141,33 @@ private struct WeekRow: View {
                         let dayAt: (CGPoint) -> Date = { location in
                             week[min(item.endCol, item.startCol + Int(location.x / width))]
                         }
-                        EventChip(
-                            event: item.event,
-                            isMultiDay: item.isMultiDay,
+                        PressableChip(
+                            item: item,
                             width: span * width - 4,
-                            height: GridMetrics.laneHeight - 2
+                            interactive: relocation == nil && !item.isPinned,
+                            onTap: { actions.onEventTap(item.event, dayAt($0)) },
+                            onDoubleTap: { actions.onDayDoubleTap(dayAt($0)) },
+                            onLongPress: { actions.onEventLongPress(item.event) }
                         )
-                        .opacity(CalendarMath.isSameMonth(week[item.startCol], month) || CalendarMath.isSameMonth(week[item.endCol], month) ? 1 : 0.45)
-                        .contentShape(Rectangle())
-                        .onTapGesture(coordinateSpace: .local) { selectedDate = dayAt($0) }
-                        .simultaneousGesture(SpatialTapGesture(count: 2).onEnded { onDayDoubleTap(dayAt($0.location)) })
-                        .onLongPressGesture { onEventLongPress(item.event) }
+                        .opacity(chipOpacity(item))
                         .offset(x: CGFloat(item.startCol) * width + 2, y: top)
                     }
                 }
             }
             .onDrop(
                 of: [.plainText],
-                delegate: TemplateDropDelegate(columnWidth: width, week: week, column: $dropColumn, onDrop: onTemplateDrop)
+                delegate: TemplateDropDelegate(columnWidth: width, week: week, column: $dropColumn, onDrop: actions.onTemplateDrop)
             )
         }
         .frame(height: GridMetrics.rowHeight)
+    }
+
+    private func chipOpacity(_ item: PlacedEvent) -> Double {
+        if item.isPinned { return 1 }
+        // The event being moved stays visible but faded at its old place.
+        if let relocation, relocation.kind == .move, relocation.event == item.event { return 0.3 }
+        let inMonth = CalendarMath.isSameMonth(week[item.startCol], month) || CalendarMath.isSameMonth(week[item.endCol], month)
+        return inMonth ? 1 : 0.45
     }
 }
 
@@ -150,16 +188,25 @@ private struct DayCell: View {
     let isSelected: Bool
     let isToday: Bool
     let isDropTarget: Bool
+    let relocating: Bool
+    let actions: GridActions
 
     @Environment(\.todayPulse) private var todayPulse
+    @State private var pressing = false
 
     var body: some View {
         ZStack(alignment: .topLeading) {
             if isDropTarget || isSelected {
-                RoundedRectangle(cornerRadius: 6, style: .continuous)
+                RoundedRectangle(cornerRadius: GridMetrics.cornerRadius, style: .continuous)
                     .fill(isDropTarget ? Color.brand.opacity(0.16) : Color.primary.opacity(0.07))
                     .padding(1)
             }
+
+            // Long-press progress: the day's outline draws itself while held.
+            RoundedRectangle(cornerRadius: GridMetrics.cornerRadius, style: .continuous)
+                .trim(from: 0, to: pressing ? 1 : 0)
+                .stroke(Color.brand, style: StrokeStyle(lineWidth: 2, lineCap: .round))
+                .padding(1)
 
             Rectangle()
                 .fill(isSelected ? Color.brand : Color.dayLine)
@@ -181,19 +228,18 @@ private struct DayCell: View {
                         .scaleEffect(value.scale)
                         .rotationEffect(.degrees(value.angle))
                 } keyframes: { _ in
-                    // A quick burst of about 0.33 s. Cubic keyframes land exactly on 1.0;
-                    // a short spring keyframe could stop before settling and leave the number enlarged.
+                    // A quick burst of about 0.33 s. Cubic keyframes land exactly on 1.0.
                     KeyframeTrack(\.scale) {
-                        CubicKeyframe(1.7, duration: 0.1)
-                        LinearKeyframe(1.7, duration: 0.1)
+                        CubicKeyframe(1.35, duration: 0.1)
+                        LinearKeyframe(1.35, duration: 0.1)
                         CubicKeyframe(1.0, duration: 0.13)
                     }
                     KeyframeTrack(\.angle) {
-                        LinearKeyframe(-14, duration: 0.05)
-                        LinearKeyframe(14, duration: 0.05)
                         LinearKeyframe(-12, duration: 0.05)
                         LinearKeyframe(12, duration: 0.05)
-                        LinearKeyframe(-6, duration: 0.05)
+                        LinearKeyframe(-10, duration: 0.05)
+                        LinearKeyframe(10, duration: 0.05)
+                        LinearKeyframe(-5, duration: 0.05)
                         LinearKeyframe(0, duration: 0.05)
                     }
                 }
@@ -203,6 +249,65 @@ private struct DayCell: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .opacity(inMonth ? 1 : 0.35)
         .animation(.easeInOut(duration: 0.2), value: isSelected)
+        .contentShape(Rectangle())
+        .onTapGesture {
+            if relocating { actions.onTargetTap(day) } else { actions.onDayTap(day) }
+        }
+        .simultaneousGesture(TapGesture(count: 2).onEnded {
+            if !relocating { actions.onDayDoubleTap(day) }
+        })
+        .onLongPressGesture(minimumDuration: GridMetrics.longPress) {
+            if !relocating { actions.onDayLongPress(day) }
+        } onPressingChanged: { isPressing in
+            pressProgress(isPressing && !relocating, $pressing)
+        }
+    }
+}
+
+/// Starts the progress a moment after touch-down (so plain taps don't flash it) and resets instantly on release.
+private func pressProgress(_ isPressing: Bool, _ value: Binding<Bool>) {
+    if isPressing {
+        withAnimation(.linear(duration: GridMetrics.longPress - 0.1).delay(0.1)) { value.wrappedValue = true }
+    } else {
+        var transaction = Transaction()
+        transaction.disablesAnimations = true
+        withTransaction(transaction) { value.wrappedValue = false }
+    }
+}
+
+/// An event line with tap, double tap and a long press that draws an underline while held.
+private struct PressableChip: View {
+    let item: PlacedEvent
+    let width: CGFloat
+    let interactive: Bool
+    var onTap: (CGPoint) -> Void
+    var onDoubleTap: (CGPoint) -> Void
+    var onLongPress: () -> Void
+
+    @State private var pressing = false
+
+    var body: some View {
+        EventChip(
+            event: item.event,
+            isMultiDay: item.isMultiDay,
+            width: width,
+            height: GridMetrics.laneHeight - 2
+        )
+        .overlay(alignment: .bottomLeading) {
+            Capsule()
+                .fill(Color.brand)
+                .frame(width: pressing ? width : 0, height: 2)
+                .offset(y: 2)
+        }
+        .contentShape(Rectangle())
+        .onTapGesture(coordinateSpace: .local) { onTap($0) }
+        .simultaneousGesture(SpatialTapGesture(count: 2).onEnded { onDoubleTap($0.location) })
+        .onLongPressGesture(minimumDuration: GridMetrics.longPress) {
+            onLongPress()
+        } onPressingChanged: { isPressing in
+            pressProgress(isPressing, $pressing)
+        }
+        .allowsHitTesting(interactive)
     }
 }
 
@@ -241,13 +346,16 @@ struct PlacedEvent: Identifiable {
     let endCol: Int
     let lane: Int
     let isMultiDay: Bool
+    /// A preview of where a relocated event will land.
+    var isPinned = false
 
-    var id: String { "\(event.eventIdentifier ?? "")|\(event.startDate.timeIntervalSince1970)|\(startCol)" }
+    var id: String { "\(isPinned ? "pin" : "")\(event.eventIdentifier ?? "")|\(event.startDate.timeIntervalSince1970)|\(startCol)" }
 }
 
 enum WeekLayout {
     /// Assigns each event in the week to the lowest free line, multi-day events first so their bars stay level.
-    static func place(_ events: [EKEvent], in week: [Date]) -> [PlacedEvent] {
+    /// Relocation targets get a preview of the event forced onto the top line; everything else moves down.
+    static func place(_ events: [EKEvent], in week: [Date], relocation: Relocation? = nil) -> [PlacedEvent] {
         guard let weekStart = week.first else { return [] }
         let weekEnd = CalendarMath.addDays(7, to: weekStart)
 
@@ -280,6 +388,19 @@ enum WeekLayout {
 
         var lanes: [[Bool]] = []
         var result: [PlacedEvent] = []
+
+        if let relocation {
+            let pinnedColumns = week.indices.filter { relocation.targets.contains(week[$0]) }
+            if !pinnedColumns.isEmpty {
+                var top = Array(repeating: false, count: 7)
+                for column in pinnedColumns {
+                    top[column] = true
+                    result.append(PlacedEvent(event: relocation.event, startCol: column, endCol: column, lane: 0, isMultiDay: false, isPinned: true))
+                }
+                lanes.append(top)
+            }
+        }
+
         for item in items {
             let columns = item.startCol...item.endCol
             var lane = 0

@@ -33,6 +33,17 @@ struct MonthPickerSheet: View {
                     .monospacedDigit()
                     .contentTransition(.numericText(value: Double(year)))
                 HStack {
+                    // Back to this year; hidden while already there.
+                    Button { change(thisYear - year) } label: {
+                        Image(systemName: "arrow.uturn.left")
+                            .font(.system(size: 15, weight: .semibold))
+                            .frame(width: 36, height: 36)
+                    }
+                    .buttonStyle(.glass)
+                    .buttonBorderShape(.circle)
+                    .opacity(year == thisYear ? 0 : 1)
+                    .disabled(year == thisYear)
+                    .animation(.snappy, value: year == thisYear)
                     Spacer()
                     Button { dismiss() } label: {
                         Image(systemName: "xmark")

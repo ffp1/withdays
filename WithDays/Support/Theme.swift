@@ -40,6 +40,12 @@ enum SettingsKey {
     static let holidayCalendar = "holidayCalendar"
     static let defaultCalendar = "defaultCalendar"
     static let templates = "templates"
+    static let homeMode = "homeMode"
+    static let hiddenTodoLists = "hiddenTodoLists"
+    static let todoWidgetList = "todoWidgetList"
+    static let selectedTodoList = "selectedTodoList"
+    static let todoMeta = "todoMeta"
+    static let createdDefaultTodoLists = "createdDefaultTodoLists"
 }
 
 enum AppTheme: String, CaseIterable, Identifiable {
@@ -53,6 +59,11 @@ enum AppTheme: String, CaseIterable, Identifiable {
         case .light: "ライト"
         case .dark: "ダーク"
         }
+    }
+
+    /// The theme chosen in the app, readable from the widgets through the App Group.
+    static var current: AppTheme {
+        AppTheme(rawValue: AppGroup.defaults.string(forKey: SettingsKey.theme) ?? "") ?? .system
     }
 
     var colorScheme: ColorScheme? {

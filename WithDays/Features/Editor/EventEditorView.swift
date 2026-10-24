@@ -40,9 +40,10 @@ struct EventEditorView: View {
     @State private var draft: EventDraft
     @State private var path: [EditorPath] = []
     @State private var spanRequest: SpanRequest?
-    @State private var confirmDelete = false
     @State private var errorMessage: String?
     @FocusState private var titleFocused: Bool
+    /// Filled a moment after typing pauses, so nothing else changes while the keyboard is still composing.
+    @State private var suggestions: [EKEvent] = []
 
     init(mode: EditorMode, day: Date = .now) {
         self.mode = mode
@@ -82,10 +83,6 @@ struct EventEditorView: View {
         store.calendar(id: draft.calendarID) ?? store.defaultCalendar
     }
 
-    private var suggestions: [EKEvent] {
-        guard titleFocused else { return [] }
-        return store.history(matching: draft.title, limit: 5)
-    }
 
     var body: some View {
         NavigationStack(path: $path) {
@@ -150,8 +147,8 @@ struct EventEditorView: View {
                     Button { dismiss() } label: { Image(systemName: "xmark") }
                 }
                 ToolbarItem(placement: .confirmationAction) {
+                    // Never disabled: flipping it while typing commits the first character of Japanese input.
                     Button(action: save) { Image(systemName: "checkmark") }
-                        .disabled(!canSave)
                         .buttonStyle(.glassProminent)
                         .tint(.brand)
                 }
@@ -182,10 +179,15 @@ struct EventEditorView: View {
                 titleFocused = true
             }
         }
-        .spanDialog($spanRequest)
-        .confirmationDialog("この予定を削除しますか？", isPresented: $confirmDelete, titleVisibility: .visible) {
-            Button("削除", role: .destructive) { deleteEvent(span: .thisEvent) }
+        .task(id: draft.title) {
+            try? await Task.sleep(for: .milliseconds(300))
+            guard !Task.isCancelled else { return }
+            suggestions = titleFocused ? store.history(matching: draft.title, limit: 5) : []
         }
+        .onChange(of: titleFocused) { _, focused in
+            if !focused { suggestions = [] }
+        }
+        .spanDialog($spanRequest)
         .errorAlert($errorMessage)
     }
 
@@ -214,7 +216,6 @@ struct EventEditorView: View {
                     .padding(.vertical, 6)
             }
             .buttonStyle(.glassProminent)
-            .disabled(!canSave)
 
             if editingEvent != nil {
                 Button(role: .destructive, action: requestDelete) {
@@ -272,6 +273,7 @@ struct EventEditorView: View {
     private func applySuggestion(_ event: EKEvent) {
         let copied = EventDraft(event: event).placed(on: draft.start)
         titleFocused = false
+        suggestions = []
         draft = copied
     }
 
@@ -299,7 +301,8 @@ struct EventEditorView: View {
         if event.hasRecurrenceRules {
             spanRequest = SpanRequest(message: "くりかえしの予定を削除", destructive: true) { deleteEvent(span: $0) }
         } else {
-            confirmDelete = true
+            // No confirmation: the toast on the home screen can undo it.
+            deleteEvent(span: .thisEvent)
         }
     }
 

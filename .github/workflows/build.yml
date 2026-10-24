@@ -71,6 +71,11 @@ jobs:
         run: |
           mkdir -p Payload
           cp -R build/Build/Products/Release-iphoneos/WithDays.app Payload/
+          # The build is unsigned, so embed the App Group entitlements with an ad-hoc signature
+          # (extension first, then the app); SideStore reads them when it re-signs.
+          codesign -f -s - --entitlements Entitlements/WithDaysWidget.entitlements Payload/WithDays.app/PlugIns/WithDaysWidget.appex
+          codesign -f -s - --entitlements Entitlements/WithDays.entitlements Payload/WithDays.app
+          codesign -d --entitlements - Payload/WithDays.app
           zip -qry WithDays.ipa Payload
           ls -l WithDays.ipa
 

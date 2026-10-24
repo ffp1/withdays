@@ -4,13 +4,15 @@ import SwiftUI
 struct WithDaysApp: App {
     @State private var store = CalendarStore()
     @State private var templates = TemplateStore()
-    @AppStorage(SettingsKey.theme) private var theme = AppTheme.system.rawValue
+    @State private var todos = TodoStore()
+    @AppStorage(SettingsKey.theme, store: AppGroup.defaults) private var theme = AppTheme.system.rawValue
 
     var body: some Scene {
         WindowGroup {
             RootView()
                 .environment(store)
                 .environment(templates)
+                .environment(todos)
                 .tint(.brand)
                 .preferredColorScheme((AppTheme(rawValue: theme) ?? .system).colorScheme)
         }

@@ -4,7 +4,7 @@ struct RepeatView: View {
     @Binding var recurrence: Recurrence
     var onOpenMonthly: () -> Void
 
-    @AppStorage(SettingsKey.weekStart) private var weekStart = 1
+    @AppStorage(SettingsKey.weekStart, store: AppGroup.defaults) private var weekStart = 1
 
     var body: some View {
         List {
@@ -118,10 +118,6 @@ struct MonthlyRuleView: View {
                             .buttonStyle(.plain)
                         }
                     }
-                    Text("31日を選ぶと、31日がない月は月末になります。")
-                        .font(.system(size: 12))
-                        .foregroundStyle(.secondary)
-                        .frame(maxWidth: .infinity, alignment: .leading)
                 }
                 .padding(14)
                 .background(box)

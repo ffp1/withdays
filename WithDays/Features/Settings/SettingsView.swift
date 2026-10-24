@@ -1,11 +1,12 @@
 import EventKit
 import SwiftUI
+import WidgetKit
 
 struct SettingsView: View {
     @Environment(CalendarStore.self) private var store
-    @Environment(TemplateStore.self) private var templates
-    @AppStorage(SettingsKey.theme) private var theme = AppTheme.system.rawValue
-    @AppStorage(SettingsKey.weekStart) private var weekStart = 1
+    @Environment(TodoStore.self) private var todos
+    @AppStorage(SettingsKey.theme, store: AppGroup.defaults) private var theme = AppTheme.system.rawValue
+    @AppStorage(SettingsKey.weekStart, store: AppGroup.defaults) private var weekStart = 1
 
     var body: some View {
         List {
@@ -19,12 +20,8 @@ struct SettingsView: View {
                 }
             }
 
-            Section {
-                NavigationLink {
-                    CalendarVisibilityView()
-                } label: {
-                    LabeledContent("表示するカレンダー", value: "\(store.visibleCalendars.count)/\(store.displayableCalendars.count)")
-                }
+            Section("カレンダー") {
+                NavigationLink("カレンダー") { CalendarSettingsView() }
                 Picker("新しい予定のカレンダー", selection: defaultCalendarBinding) {
                     Text("システムの設定").tag("")
                     ForEach(store.writableCalendars, id: \.calendarIdentifier) { calendar in
@@ -37,47 +34,30 @@ struct SettingsView: View {
                         Text(calendar.title).tag(calendar.calendarIdentifier)
                     }
                 }
-            } header: {
-                Text("カレンダー")
-            } footer: {
-                if let holiday = store.holidayCalendar {
-                    Text("「\(holiday.title)」の日付を赤く表示します。祝日は予定としては表示しません。")
-                } else {
-                    Text("祝日カレンダーが見つかりません。iPhoneの「カレンダー」アプリのカレンダー一覧で「日本の祝日」を追加すると、祝日が赤く表示されます。")
-                }
+                NavigationLink("テンプレート") { TemplateListView() }
             }
 
-            Section("テンプレート") {
-                NavigationLink {
-                    TemplateListView()
-                } label: {
-                    LabeledContent("テンプレート", value: "\(templates.templates.count)件")
+            if todos.access == .granted {
+                Section("ToDo") {
+                    NavigationLink("カテゴリ") { TodoCategorySettingsView() }
+                    Picker("ウィジェットにするカテゴリ", selection: widgetListBinding) {
+                        ForEach(todos.sortedLists, id: \.calendarIdentifier) { list in
+                            Text(list.title).tag(list.calendarIdentifier)
+                        }
+                    }
                 }
             }
 
             Section {
-                LabeledContent("カレンダーへのアクセス", value: store.access == .granted ? "フルアクセス" : "なし")
                 Button("iPhoneの設定を開く") {
                     if let url = URL(string: UIApplication.openSettingsURLString) {
                         UIApplication.shared.open(url)
                     }
                 }
                 .foregroundStyle(.primary)
-            } header: {
-                Text("同期")
-            } footer: {
-                Text("予定は Appleのカレンダーに直接保存され、iCloud を通じて他のデバイスと同期されます。")
             }
 
-            Section("WithDays について") {
-                VStack(alignment: .leading, spacing: 6) {
-                    Text(AppInfo.name)
-                        .font(.system(size: 17, weight: .bold))
-                    Text(AppInfo.summary)
-                        .font(.system(size: 13))
-                        .foregroundStyle(.secondary)
-                }
-                .padding(.vertical, 4)
+            Section("WithDays") {
                 LabeledContent("バージョン", value: "\(AppInfo.version) (\(AppInfo.build))")
                 NavigationLink("更新履歴") { ChangelogView() }
                 Link(destination: AppInfo.repositoryURL) {
@@ -88,6 +68,9 @@ struct SettingsView: View {
         }
         .navigationTitle("設定")
         .navigationBarTitleDisplayMode(.inline)
+        // Widgets read these from the App Group.
+        .onChange(of: theme) { WidgetCenter.shared.reloadAllTimelines() }
+        .onChange(of: weekStart) { WidgetCenter.shared.reloadAllTimelines() }
     }
 
     private var defaultCalendarBinding: Binding<String> {
@@ -97,10 +80,18 @@ struct SettingsView: View {
     private var holidayCalendarBinding: Binding<String> {
         Binding(get: { store.holidayCalendarID }, set: { store.holidayCalendarID = $0 })
     }
+
+    private var widgetListBinding: Binding<String> {
+        Binding(get: { todos.widgetListID }, set: { todos.widgetListID = $0 })
+    }
 }
 
-private struct CalendarVisibilityView: View {
+/// Show/hide, add and delete (swipe left) calendars.
+private struct CalendarSettingsView: View {
     @Environment(CalendarStore.self) private var store
+    @State private var adding = false
+    @State private var pendingDelete: EKCalendar?
+    @State private var errorMessage: String?
 
     var body: some View {
         List {
@@ -113,12 +104,38 @@ private struct CalendarVisibilityView: View {
                                 Text(calendar.title)
                             }
                         }
+                        .swipeActions(edge: .trailing) {
+                            if store.canDelete(calendar) {
+                                Button(role: .destructive) { pendingDelete = calendar } label: {
+                                    Image(systemName: "trash")
+                                }
+                                .tint(.red)
+                            }
+                        }
                     }
                 }
             }
+            Section {
+                Button { adding = true } label: {
+                    Label("カレンダーを追加", systemImage: "plus")
+                        .foregroundStyle(.primary)
+                }
+            }
         }
-        .navigationTitle("表示するカレンダー")
+        .navigationTitle("カレンダー")
         .navigationBarTitleDisplayMode(.inline)
+        .sheet(isPresented: $adding) {
+            NavigationStack {
+                NewCalendarView { _ in adding = false }
+                    .toolbar {
+                        ToolbarItem(placement: .cancellationAction) {
+                            Button { adding = false } label: { Image(systemName: "xmark") }
+                        }
+                    }
+            }
+        }
+        .calendarDeleteDialog($pendingDelete, errorMessage: $errorMessage)
+        .errorAlert($errorMessage)
     }
 
     private func binding(for id: String) -> Binding<Bool> {
@@ -126,6 +143,71 @@ private struct CalendarVisibilityView: View {
             get: { !store.hiddenCalendarIDs.contains(id) },
             set: { visible in
                 if visible { store.hiddenCalendarIDs.remove(id) } else { store.hiddenCalendarIDs.insert(id) }
+            }
+        )
+    }
+}
+
+/// Show/hide, edit (tap), add and delete (swipe left) ToDo categories.
+private struct TodoCategorySettingsView: View {
+    @Environment(TodoStore.self) private var todos
+    @State private var sheet: CategorySheet?
+    @State private var pendingDelete: EKCalendar?
+    @State private var errorMessage: String?
+
+    var body: some View {
+        List {
+            Section {
+                ForEach(todos.sortedLists, id: \.calendarIdentifier) { list in
+                    HStack(spacing: 10) {
+                        Button { sheet = .edit(list) } label: {
+                            HStack(spacing: 10) {
+                                CalendarDot(color: Color(cgColor: list.cgColor))
+                                Text(list.title).foregroundStyle(.primary)
+                            }
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
+                        Toggle("", isOn: binding(for: list.calendarIdentifier))
+                            .labelsHidden()
+                    }
+                    .swipeActions(edge: .trailing) {
+                        Button(role: .destructive) { pendingDelete = list } label: {
+                            Image(systemName: "trash")
+                        }
+                        .tint(.red)
+                    }
+                }
+            }
+            Section {
+                Button { sheet = .new } label: {
+                    Label("カテゴリを追加", systemImage: "plus")
+                        .foregroundStyle(.primary)
+                }
+            }
+        }
+        .navigationTitle("カテゴリ")
+        .navigationBarTitleDisplayMode(.inline)
+        .sheet(item: $sheet) { CategoryEditorView(sheet: $0) }
+        .confirmationDialog(
+            "「\(pendingDelete?.title ?? "")」とその中のToDoを削除します",
+            isPresented: Binding(get: { pendingDelete != nil }, set: { if !$0 { pendingDelete = nil } }),
+            titleVisibility: .visible,
+            presenting: pendingDelete
+        ) { list in
+            Button("削除", role: .destructive) {
+                do { try todos.deleteList(list) } catch { errorMessage = error.localizedDescription }
+            }
+        }
+        .errorAlert($errorMessage)
+    }
+
+    private func binding(for id: String) -> Binding<Bool> {
+        Binding(
+            get: { !todos.hiddenListIDs.contains(id) },
+            set: { visible in
+                if visible { todos.hiddenListIDs.remove(id) } else { todos.hiddenListIDs.insert(id) }
             }
         )
     }

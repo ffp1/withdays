@@ -4,17 +4,15 @@ import SwiftUI
 /// Half-height details on long press; pulling it up to full height turns it into the editor.
 struct EventDetailSheet: View {
     let event: EKEvent
+    /// Hands the event back to the calendar to pick a new day (move) or days (duplicate).
+    var onRelocate: (RelocationKind) -> Void
 
     @Environment(CalendarStore.self) private var store
     @Environment(TemplateStore.self) private var templates
     @Environment(\.dismiss) private var dismiss
 
     @State private var detent: PresentationDetent = .medium
-    @State private var dateAction: DateAction?
-    @State private var pickedDates: [Date] = []
-    @State private var pendingAction: DateAction?
     @State private var spanRequest: SpanRequest?
-    @State private var confirmDelete = false
     @State private var savedAsTemplate = false
     @State private var errorMessage: String?
 
@@ -28,16 +26,7 @@ struct EventDetailSheet: View {
         }
         .presentationDetents([.medium, .large], selection: $detent)
         .presentationDragIndicator(.visible)
-        .sheet(item: $dateAction, onDismiss: applyPickedDates) { action in
-            DatePickModal(action: action, initialDate: event.startDate) { dates in
-                pendingAction = action
-                pickedDates = dates
-            }
-        }
         .spanDialog($spanRequest)
-        .confirmationDialog("この予定を削除しますか？", isPresented: $confirmDelete, titleVisibility: .visible) {
-            Button("削除", role: .destructive) { run { try store.delete(event) } }
-        }
         .errorAlert($errorMessage)
     }
 
@@ -67,7 +56,7 @@ struct EventDetailSheet: View {
                     .fixedSize(horizontal: false, vertical: true)
 
                     if let location = event.location, !location.isEmpty {
-                        infoRow(icon: "mappin.and.ellipse") { Text(location) }
+                        infoRow(icon: "map.fill") { Text(location) }
                     }
                     if let url = event.url {
                         infoRow(icon: "link") {
@@ -93,8 +82,8 @@ struct EventDetailSheet: View {
             }
             .safeAreaInset(edge: .bottom) {
                 HStack(spacing: 10) {
-                    actionButton("移動", icon: "calendar.badge.clock") { dateAction = .move }
-                    actionButton("複製", icon: "plus.square.on.square") { dateAction = .duplicate }
+                    actionButton("移動", icon: "calendar.badge.clock") { relocate(.move) }
+                    actionButton("複製", icon: "plus.square.on.square") { relocate(.duplicate) }
                     actionButton(
                         savedAsTemplate ? "登録しました" : "テンプレートに登録",
                         icon: savedAsTemplate ? "checkmark" : "square.on.square.dashed",
@@ -151,29 +140,14 @@ struct EventDetailSheet: View {
                 run { try store.delete(event, span: span) }
             }
         } else {
-            confirmDelete = true
+            // No confirmation: the toast on the home screen can undo it.
+            run { try store.delete(event) }
         }
     }
 
-    /// Runs after the date modal has closed, so a span question can be shown here.
-    private func applyPickedDates() {
-        guard let action = pendingAction, !pickedDates.isEmpty else { return }
-        let dates = pickedDates
-        pendingAction = nil
-        pickedDates = []
-        switch action {
-        case .duplicate:
-            run { try store.duplicate(event, to: dates) }
-        case .move:
-            guard let day = dates.first else { return }
-            if event.hasRecurrenceRules {
-                spanRequest = SpanRequest(message: "くりかえしの予定を移動") { span in
-                    run { try store.move(event, to: day, span: span) }
-                }
-            } else {
-                run { try store.move(event, to: day) }
-            }
-        }
+    private func relocate(_ kind: RelocationKind) {
+        dismiss()
+        onRelocate(kind)
     }
 
     private func run(_ work: () throws -> Void) {

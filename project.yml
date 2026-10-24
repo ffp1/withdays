@@ -32,6 +32,8 @@ targets:
         NSCalendarsFullAccessUsageDescription: Appleのカレンダーの予定を表示・追加・編集するために使います。
         NSCalendarsUsageDescription: Appleのカレンダーの予定を表示・追加・編集するために使います。
         NSCalendarsWriteOnlyAccessUsageDescription: Appleのカレンダーに予定を追加するために使います。
+        NSRemindersFullAccessUsageDescription: ToDoとしてAppleのリマインダーを表示・追加・編集するために使います。
+        NSRemindersUsageDescription: ToDoとしてAppleのリマインダーを表示・追加・編集するために使います。
         CFBundleURLTypes:
           - CFBundleURLName: com.ffuime.withdays
             CFBundleURLSchemes:
@@ -42,6 +44,7 @@ targets:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.ffuime.withdays
         PRODUCT_NAME: WithDays
+        CODE_SIGN_ENTITLEMENTS: Entitlements/WithDays.entitlements
         TARGETED_DEVICE_FAMILY: "1"
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
         ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME: AccentColor
@@ -57,6 +60,8 @@ targets:
       # Date math, colors and deep links are shared with the app.
       - path: WithDays/Support/Formatting.swift
       - path: WithDays/Support/Theme.swift
+      - path: WithDays/Support/AppGroup.swift
+      - path: WithDays/Support/TodoMeta.swift
     info:
       path: WithDaysWidget/Info.plist
       properties:
@@ -67,10 +72,12 @@ targets:
         NSExtension:
           NSExtensionPointIdentifier: com.apple.widgetkit-extension
         NSCalendarsFullAccessUsageDescription: ウィジェットに今週の予定を表示するために使います。
+        NSRemindersFullAccessUsageDescription: ウィジェットにToDoを表示し、完了にするために使います。
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.ffuime.withdays.widget
         PRODUCT_NAME: WithDaysWidget
+        CODE_SIGN_ENTITLEMENTS: Entitlements/WithDaysWidget.entitlements
         TARGETED_DEVICE_FAMILY: "1"
         GENERATE_INFOPLIST_FILE: NO
         SKIP_INSTALL: YES

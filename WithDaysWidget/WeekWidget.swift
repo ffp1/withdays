@@ -6,6 +6,7 @@ import WidgetKit
 struct WithDaysWidgetBundle: WidgetBundle {
     var body: some Widget {
         WeekWidget()
+        TodoWidget()
     }
 }
 
@@ -60,10 +61,11 @@ struct WeekProvider: TimelineProvider {
 }
 
 enum WeekLoader {
-    /// Sunday-to-Saturday week containing today.
+    /// The week containing today, starting on the app's week-start setting.
     static func weekDays() -> [Date] {
+        let weekStart = AppGroup.defaults.object(forKey: SettingsKey.weekStart) as? Int ?? 1
         let today = CalendarMath.startOfDay(.now)
-        let start = CalendarMath.addDays(-(CalendarMath.weekday(today) - 1), to: today)
+        let start = CalendarMath.addDays(-((CalendarMath.weekday(today) - weekStart + 7) % 7), to: today)
         return (0..<7).map { CalendarMath.addDays($0, to: start) }
     }
 
@@ -79,11 +81,16 @@ enum WeekLoader {
         let days = weekDays()
         let end = CalendarMath.addDays(7, to: days[0])
 
-        // Same holiday detection as the app: it only colors dates and is not listed as events.
+        // Same holiday and visibility settings as the app: holidays only color dates.
         let calendars = store.calendars(for: .event)
-        let holidayCalendar = calendars.first { $0.title.contains("祝日") }
+        let chosenHoliday = AppGroup.defaults.string(forKey: SettingsKey.holidayCalendar) ?? ""
+        let hidden = Set(AppGroup.defaults.stringArray(forKey: SettingsKey.hiddenCalendars) ?? [])
+        let holidayCalendar = calendars.first { !chosenHoliday.isEmpty && $0.calendarIdentifier == chosenHoliday }
+            ?? calendars.first { $0.title.contains("祝日") }
             ?? calendars.first { $0.type == .subscription && $0.title.localizedCaseInsensitiveContains("holiday") }
-        let visible = calendars.filter { $0.calendarIdentifier != holidayCalendar?.calendarIdentifier }
+        let visible = calendars.filter {
+            $0.calendarIdentifier != holidayCalendar?.calendarIdentifier && !hidden.contains($0.calendarIdentifier)
+        }
 
         let events = visible.isEmpty ? [] : store.events(matching: store.predicateForEvents(withStart: days[0], end: end, calendars: visible))
 
@@ -158,10 +165,23 @@ struct WeekWidgetView: View {
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-        // The app's theme setting isn't reachable without an App Group, so the widget is always light.
-        .environment(\.colorScheme, .light)
-        .containerBackground(for: .widget) {
-            Color.white
+        .themedWidget()
+    }
+}
+
+extension View {
+    /// Follows the app's theme setting (shared through the App Group); "system" follows the device.
+    @ViewBuilder
+    func themedWidget() -> some View {
+        if let scheme = AppTheme.current.colorScheme {
+            environment(\.colorScheme, scheme)
+                .containerBackground(for: .widget) {
+                    scheme == .dark ? Color(white: 0.11) : Color.white
+                }
+        } else {
+            containerBackground(for: .widget) {
+                Color(.systemBackground)
+            }
         }
     }
 }

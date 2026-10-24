@@ -6,6 +6,7 @@ struct DayEventList: View {
     let day: Date
     var onEdit: (EKEvent) -> Void
     var onDelete: (EKEvent) -> Void
+    var onRelocate: (EKEvent, RelocationKind) -> Void
     var onAdd: () -> Void
 
     @Environment(CalendarStore.self) private var store
@@ -18,47 +19,54 @@ struct DayEventList: View {
             return a.startDate < b.startDate
         }
 
-        List {
-            if events.isEmpty {
-                Text("予定はありません")
-                    .font(.system(size: 14))
-                    .foregroundStyle(.secondary)
-                    .frame(maxWidth: .infinity, alignment: .center)
-                    .listRowSeparator(.hidden)
-            }
-            ForEach(events, id: \.self) { event in
-                EventRow(event: event, dayStart: start, dayEnd: end)
-                    .listRowSeparator(.visible)
-                    .contentShape(Rectangle())
-                    .onTapGesture { onEdit(event) }
-                    .swipeActions(edge: .trailing) {
-                        Button(role: .destructive) { onDelete(event) } label: {
-                            Label("削除", systemImage: "trash")
+        ZStack {
+            List {
+                ForEach(events, id: \.self) { event in
+                    EventRow(event: event, dayStart: start, dayEnd: end)
+                        .listRowSeparator(.visible)
+                        .contentShape(Rectangle())
+                        .onTapGesture { onEdit(event) }
+                        .swipeActions(edge: .trailing) {
+                            Button(role: .destructive) { onDelete(event) } label: {
+                                Image(systemName: "trash")
+                            }
+                            .tint(.red)
                         }
-                        .tint(.red)
-                    }
-                    .swipeActions(edge: .leading) {
-                        Button { onEdit(event) } label: {
-                            Label("編集", systemImage: "pencil")
+                        // Swiping all the way runs the first action: duplicate.
+                        .swipeActions(edge: .leading, allowsFullSwipe: true) {
+                            Button { onRelocate(event, .duplicate) } label: {
+                                Image(systemName: "plus.square.on.square")
+                            }
+                            .tint(.gray)
+                            Button { onRelocate(event, .move) } label: {
+                                Image(systemName: "calendar.badge.clock")
+                            }
+                            .tint(Color(.systemGray2))
+                            Button { onEdit(event) } label: {
+                                Image(systemName: "pencil.and.outline")
+                            }
+                            .tint(.brand)
                         }
-                        .tint(.gray)
-                    }
-            }
+                }
 
-            Button(action: onAdd) {
-                Label("予定を追加", systemImage: "plus")
-                    .font(.system(size: 15, weight: .semibold))
-                    .foregroundStyle(.secondary)
-                    .frame(maxWidth: .infinity, alignment: .center)
-                    .padding(.vertical, 4)
-                    .contentShape(Rectangle())
+                Button(action: onAdd) {
+                    Label("予定を追加", systemImage: "plus")
+                        .font(.system(size: 15, weight: .semibold))
+                        .foregroundStyle(.secondary)
+                        .frame(maxWidth: .infinity, alignment: .center)
+                        .padding(.vertical, 4)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                // Hide only its own bottom line so the last event still gets a divider above this row.
+                .listRowSeparator(.hidden, edges: .bottom)
             }
-            .buttonStyle(.plain)
-            // Hide only its own bottom line so the last event still gets a divider above this row.
-            .listRowSeparator(.hidden, edges: .bottom)
+            .listStyle(.plain)
+            .contentMargins(.bottom, 96, for: .scrollContent)
+            .id(start)
+            .transition(.opacity.combined(with: .offset(y: 6)))
         }
-        .listStyle(.plain)
-        .contentMargins(.bottom, 96, for: .scrollContent)
+        .animation(.easeInOut(duration: 0.2), value: start)
     }
 }
 
@@ -83,7 +91,7 @@ private struct EventRow: View {
                     .font(.system(size: 15, weight: .bold))
                     .foregroundStyle(.primary)
                 if let location = event.location, !location.isEmpty {
-                    detail(location, icon: "mappin.and.ellipse")
+                    detail(location, icon: "map.fill")
                 }
                 if let url = event.url {
                     detail(url.absoluteString, icon: "link")

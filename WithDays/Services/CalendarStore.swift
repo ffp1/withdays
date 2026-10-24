@@ -17,9 +17,17 @@ final class CalendarStore {
     /// Bumped on every change to the database; views that fetch events read it so they refresh.
     private(set) var revision = 0
 
+    /// What the last delete removed, kept so the toast can put it back.
+    struct DeletedEvent: Identifiable {
+        let id = UUID()
+        let draft: EventDraft
+    }
+
+    private(set) var lastDeleted: DeletedEvent?
+
     var hiddenCalendarIDs: Set<String> {
         didSet {
-            UserDefaults.standard.set(Array(hiddenCalendarIDs), forKey: SettingsKey.hiddenCalendars)
+            AppGroup.defaults.set(Array(hiddenCalendarIDs), forKey: SettingsKey.hiddenCalendars)
             invalidate()
         }
     }
@@ -27,14 +35,14 @@ final class CalendarStore {
     /// Empty means "detect automatically".
     var holidayCalendarID: String {
         didSet {
-            UserDefaults.standard.set(holidayCalendarID, forKey: SettingsKey.holidayCalendar)
+            AppGroup.defaults.set(holidayCalendarID, forKey: SettingsKey.holidayCalendar)
             invalidate()
         }
     }
 
     /// Empty means the system default calendar.
     var defaultCalendarID: String {
-        didSet { UserDefaults.standard.set(defaultCalendarID, forKey: SettingsKey.defaultCalendar) }
+        didSet { AppGroup.defaults.set(defaultCalendarID, forKey: SettingsKey.defaultCalendar) }
     }
 
     @ObservationIgnored private var eventCache: [String: [EKEvent]] = [:]
@@ -43,7 +51,8 @@ final class CalendarStore {
     @ObservationIgnored private var observer: NSObjectProtocol?
 
     init() {
-        let defaults = UserDefaults.standard
+        AppGroup.migrate()
+        let defaults = AppGroup.defaults
         hiddenCalendarIDs = Set(defaults.stringArray(forKey: SettingsKey.hiddenCalendars) ?? [])
         holidayCalendarID = defaults.string(forKey: SettingsKey.holidayCalendar) ?? ""
         defaultCalendarID = defaults.string(forKey: SettingsKey.defaultCalendar) ?? ""
@@ -143,6 +152,17 @@ final class CalendarStore {
             groups[title, default: []].append(calendar)
         }
         return order.map { CalendarGroup(source: $0, calendars: groups[$0] ?? []) }
+    }
+
+    /// Calendars the user can remove (not subscriptions, birthdays or the account's locked calendars).
+    func canDelete(_ calendar: EKCalendar) -> Bool {
+        calendar.allowsContentModifications && !calendar.isImmutable && calendar.type != .subscription && calendar.type != .birthday
+    }
+
+    func deleteCalendar(_ calendar: EKCalendar) throws {
+        try eventStore.removeCalendar(calendar, commit: true)
+        if hiddenCalendarIDs.contains(calendar.calendarIdentifier) { hiddenCalendarIDs.remove(calendar.calendarIdentifier) }
+        reload()
     }
 
     func createCalendar(title: String, color: UIColor) throws -> EKCalendar {
@@ -263,8 +283,22 @@ final class CalendarStore {
     }
 
     func delete(_ event: EKEvent, span: EKSpan = .thisEvent) throws {
+        var draft = EventDraft(event: event)
+        // One occurrence comes back as a standalone event; "future events" comes back as a series from that day.
+        if span == .thisEvent { draft.recurrence = Recurrence() }
         try eventStore.remove(event, span: span, commit: true)
+        lastDeleted = DeletedEvent(draft: draft)
         reload()
+    }
+
+    func undoDelete() throws {
+        guard let deleted = lastDeleted else { return }
+        lastDeleted = nil
+        try save(deleted.draft)
+    }
+
+    func clearLastDeleted(_ id: UUID) {
+        if lastDeleted?.id == id { lastDeleted = nil }
     }
 
     /// Moves to `day`, keeping the time of day and length.
