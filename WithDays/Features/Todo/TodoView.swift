@@ -53,6 +53,12 @@ enum CategorySheet: Identifiable {
     }
 }
 
+private struct PageSlot: Identifiable, Equatable {
+    let id: String
+    /// -1 left, 0 current, 1 right.
+    let slot: Int
+}
+
 private enum TodoField: Hashable {
     case title, notes
 }
@@ -69,8 +75,12 @@ private struct TodoContent: View {
     @State private var showDone = false
     /// Checked items wait 3 seconds before moving to 実行済み; checking again in that time cancels.
     @State private var pendingDone: [String: Task<Void, Never>] = [:]
-    /// Direction of the last category change, for the slide.
-    @State private var forward = true
+    /// Horizontal paging between categories.
+    @State private var dragOffset: CGFloat = 0
+    @State private var pageWidth: CGFloat = 0
+    /// While a tapped category slides in, it takes the neighbour slot on its side.
+    @State private var incoming: PageSlot?
+    @State private var completedPulse = 0
     @State private var categorySheet: CategorySheet?
     @State private var errorMessage: String?
     @FocusState private var focus: TodoField?
@@ -84,34 +94,54 @@ private struct TodoContent: View {
     }
 
     var body: some View {
-        let doneItems = todos.done[listID] ?? []
+        let doneCount = todos.done[listID]?.count ?? 0
         VStack(spacing: 0) {
             CategoryBar(
-                onSelect: selectList,
+                onSelect: { slide(to: $0.calendarIdentifier) },
                 onAdd: { categorySheet = .new },
                 onEdit: { categorySheet = .edit($0) }
             )
+            // Pages follow the finger like the calendar's months: neighbours sit one width to either side.
             ZStack {
-                list(doneItems: doneItems)
-                    .id(listID)
-                    .transition(.push(from: forward ? .trailing : .leading))
+                ForEach(pageSlots) { page in
+                    list(for: page.id, isCurrent: page.slot == 0)
+                        .offset(x: CGFloat(page.slot) * pageWidth + dragOffset)
+                        .allowsHitTesting(page.slot == 0)
+                }
             }
+            .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { pageWidth = $0 }
             .clipped()
-            .animation(.snappy(duration: 0.3), value: listID)
         }
         .overlay(alignment: .bottom) {
             HStack(spacing: 12) {
-                // 実行済み stays at the bottom while the ToDo list is open.
-                if !showDone, !doneItems.isEmpty {
-                    sectionHeader("実行済み", count: doneItems.count, open: false) {
-                        withAnimation(.snappy) {
-                            commitEditing()
-                            showDone = true
+                // 実行済み stays next to ＋; it opens the done list in place of the ToDo list.
+                if doneCount > 0 || showDone {
+                    Button {
+                        commitEditing()
+                        withAnimation(.snappy(duration: 0.35)) { showDone.toggle() }
+                    } label: {
+                        HStack(spacing: 8) {
+                            Text("実行済み")
+                                .font(.system(size: 15, weight: .bold))
+                                .foregroundStyle(.primary)
+                            Text("\(doneCount)")
+                                .font(.system(size: 13, weight: .semibold))
+                                .monospacedDigit()
+                                .foregroundStyle(.secondary)
+                                .contentTransition(.numericText(value: Double(doneCount)))
+                            Spacer(minLength: 0)
+                            Image(systemName: "chevron.up")
+                                .font(.system(size: 13, weight: .semibold))
+                                .foregroundStyle(.tertiary)
+                                .rotationEffect(.degrees(showDone ? 180 : 0))
                         }
+                        .padding(.horizontal, 18)
+                        .frame(height: 56)
+                        .contentShape(Capsule())
                     }
-                    .padding(.horizontal, 16)
-                    .frame(height: 56)
-                    .glassEffect(.regular, in: .capsule)
+                    .buttonStyle(.plain)
+                    .glassEffect(.regular.interactive(), in: .capsule)
+                    .transition(.move(edge: .bottom).combined(with: .opacity))
                 } else {
                     Spacer()
                 }
@@ -125,6 +155,7 @@ private struct TodoContent: View {
                 .buttonBorderShape(.circle)
             }
             .padding(20)
+            .animation(.snappy, value: doneCount > 0)
         }
         .onChange(of: focus) { _, new in
             if new == nil { commitEditing() }
@@ -136,38 +167,52 @@ private struct TodoContent: View {
         .sheet(item: $categorySheet) { sheet in
             CategoryEditorView(sheet: sheet)
         }
-        .sensoryFeedback(.success, trigger: doneItems.count) { old, new in new > old }
+        // Every category change ticks, including to an empty list.
+        .sensoryFeedback(.selection, trigger: listID)
+        .sensoryFeedback(.impact(weight: .light), trigger: showDone)
+        .sensoryFeedback(.success, trigger: completedPulse)
         .errorAlert($errorMessage)
     }
 
-    private func list(doneItems: [TodoItem]) -> some View {
-        List {
-            if showDone {
-                sectionHeader("ToDo", count: todos.count(for: listID), open: false) {
-                    withAnimation(.snappy) { showDone = false }
+    /// The current list plus its neighbours, or during a tap-jump the current list and the incoming one.
+    private var pageSlots: [PageSlot] {
+        if let incoming { return [PageSlot(id: listID, slot: 0), incoming] }
+        let lists = todos.visibleLists.map(\.calendarIdentifier)
+        guard let index = lists.firstIndex(of: listID) else { return [PageSlot(id: listID, slot: 0)] }
+        var slots = [PageSlot(id: listID, slot: 0)]
+        if index > 0 { slots.append(PageSlot(id: lists[index - 1], slot: -1)) }
+        if index + 1 < lists.count { slots.append(PageSlot(id: lists[index + 1], slot: 1)) }
+        return slots
+    }
+
+    private func list(for id: String, isCurrent: Bool) -> some View {
+        let color = todos.list(id: id).map { Color(cgColor: $0.cgColor) } ?? .brand
+        let showingDone = isCurrent && showDone
+        return List {
+            if showingDone {
+                sectionHeader("ToDo", count: todos.count(for: id), open: false) {
+                    withAnimation(.snappy(duration: 0.35)) { showDone = false }
                 }
                 .listRowSeparator(.hidden, edges: .top)
-                sectionHeader("実行済み", count: doneItems.count, open: true) {
-                    withAnimation(.snappy) { showDone = false }
-                }
-                ForEach(doneItems) { item in
+                ForEach(todos.done[id] ?? []) { item in
                     TodoItemRow(
-                        item: item, depth: 0, childCount: 0, collapsed: false, color: listColor,
+                        item: item, depth: 0, childCount: 0, collapsed: false, color: color,
                         checked: true, isEditing: false,
                         draftTitle: $draftTitle, draftNotes: $draftNotes, focus: $focus,
                         onToggle: { toggle(item) }, onFold: {}, onTap: {}, onIndent: {}, onOutdent: {}
                     )
                     .swipeActions(edge: .trailing) { deleteButton(item.id) }
+                    .transition(.move(edge: .bottom).combined(with: .opacity))
                 }
             } else {
-                ForEach(todos.rows(for: listID)) { row in
-                    let editing = editingID == row.id
+                ForEach(todos.rows(for: id)) { row in
+                    let editing = isCurrent && editingID == row.id
                     TodoItemRow(
                         item: row.item,
                         depth: row.depth,
                         childCount: row.childCount,
                         collapsed: todos.meta.collapsed.contains(row.id),
-                        color: listColor,
+                        color: color,
                         checked: pendingDone[row.id] != nil,
                         isEditing: editing,
                         draftTitle: $draftTitle,
@@ -183,11 +228,12 @@ private struct TodoContent: View {
                     .swipeActions(edge: .trailing) {
                         if !editing { deleteButton(row.id) }
                     }
+                    .transition(.move(edge: .top).combined(with: .opacity))
                 }
-                if editingID == Self.newID {
+                if isCurrent, editingID == Self.newID {
                     TodoItemRow(
                         item: TodoItem(id: Self.newID, title: "", notes: "", isCompleted: false, creationDate: .now),
-                        depth: draftParent == nil ? 0 : 1, childCount: 0, collapsed: false, color: listColor,
+                        depth: draftParent == nil ? 0 : 1, childCount: 0, collapsed: false, color: color,
                         checked: false, isEditing: true,
                         draftTitle: $draftTitle, draftNotes: $draftNotes, focus: $focus,
                         onToggle: {}, onFold: {}, onTap: {}, onIndent: indentEditing, onOutdent: outdentEditing
@@ -197,17 +243,19 @@ private struct TodoContent: View {
                 }
             }
 
-            // Empty space: tap adds an item (or only ends editing); swipe changes the category.
+            // Empty space: tap adds an item (or only ends editing); drag sideways to change the category.
             Color.clear
                 .frame(height: 320)
                 .contentShape(Rectangle())
                 .onTapGesture(perform: tapEmptySpace)
-                .gesture(categorySwipe)
+                .gesture(pageDrag)
                 .listRowSeparator(.hidden)
                 .listRowBackground(Color.clear)
         }
         .listStyle(.plain)
-        .animation(.snappy, value: todos.rows(for: listID))
+        // Room for the 実行済み pill and ＋ so the last rows can scroll clear of them.
+        .contentMargins(.bottom, 96, for: .scrollContent)
+        .animation(.snappy, value: todos.rows(for: id))
     }
 
     private func sectionHeader(_ title: String, count: Int, open: Bool, action: @escaping () -> Void) -> some View {
@@ -241,23 +289,54 @@ private struct TodoContent: View {
         .tint(.red)
     }
 
-    private var categorySwipe: some Gesture {
-        DragGesture(minimumDistance: 30).onEnded { value in
-            guard abs(value.translation.width) > abs(value.translation.height) * 1.5, abs(value.translation.width) > 50 else { return }
-            let lists = todos.visibleLists
-            guard let index = lists.firstIndex(where: { $0.calendarIdentifier == listID }) else { return }
-            let next = index + (value.translation.width < 0 ? 1 : -1)
-            guard lists.indices.contains(next) else { return }
-            selectList(lists[next])
-        }
+    /// Follows the finger; past a quarter width (or a flick) it finishes the slide to the neighbour.
+    private var pageDrag: some Gesture {
+        DragGesture(minimumDistance: 20, coordinateSpace: .global)
+            .onChanged { value in
+                guard incoming == nil, abs(value.translation.width) > abs(value.translation.height) else { return }
+                let side = value.translation.width < 0 ? 1 : -1
+                // Resist at the first and last category.
+                let hasNeighbor = pageSlots.contains { $0.slot == side }
+                dragOffset = value.translation.width * (hasNeighbor ? 1 : 0.25)
+            }
+            .onEnded { value in
+                guard incoming == nil else { return }
+                let width = max(pageWidth, 1)
+                let moved = value.translation.width, flicked = value.predictedEndTranslation.width
+                let side = moved < -width / 4 || flicked < -width / 2 ? 1 : (moved > width / 4 || flicked > width / 2 ? -1 : 0)
+                guard side != 0, let target = pageSlots.first(where: { $0.slot == side }) else {
+                    withAnimation(.snappy(duration: 0.25)) { dragOffset = 0 }
+                    return
+                }
+                finishSlide(to: target)
+            }
     }
 
-    private func selectList(_ list: EKCalendar) {
-        let lists = todos.visibleLists
-        let from = lists.firstIndex { $0.calendarIdentifier == listID } ?? 0
-        let to = lists.firstIndex { $0.calendarIdentifier == list.calendarIdentifier } ?? 0
-        forward = to >= from
-        withAnimation(.snappy(duration: 0.3)) { todos.selectedListID = list.calendarIdentifier }
+    /// A tap on another category slides it in from the side it sits on, even when it isn't adjacent.
+    private func slide(to id: String) {
+        guard id != listID, incoming == nil else { return }
+        let lists = todos.visibleLists.map(\.calendarIdentifier)
+        let from = lists.firstIndex(of: listID) ?? 0
+        let to = lists.firstIndex(of: id) ?? 0
+        let target = PageSlot(id: id, slot: to > from ? 1 : -1)
+        incoming = target
+        finishSlide(to: target)
+    }
+
+    private func finishSlide(to target: PageSlot) {
+        commitEditing()
+        withAnimation(.snappy(duration: 0.3)) {
+            dragOffset = -CGFloat(target.slot) * pageWidth
+        } completion: {
+            // Swap without animation: the incoming page is already where the current one will be.
+            var transaction = Transaction()
+            transaction.disablesAnimations = true
+            withTransaction(transaction) {
+                todos.selectedListID = target.id
+                incoming = nil
+                dragOffset = 0
+            }
+        }
     }
 
     // MARK: Editing
@@ -344,6 +423,7 @@ private struct TodoContent: View {
             try? await Task.sleep(for: .seconds(3))
             guard !Task.isCancelled else { return }
             pendingDone[item.id] = nil
+            completedPulse += 1
             withAnimation(.snappy) { run { try todos.setCompleted(item.id, true) } }
         }
     }
@@ -373,8 +453,12 @@ private struct TodoItemRow: View {
     var onIndent: () -> Void
     var onOutdent: () -> Void
 
+    private var hasNotes: Bool {
+        isEditing || !item.notes.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
     var body: some View {
-        HStack(alignment: .top, spacing: 10) {
+        HStack(alignment: hasNotes ? .top : .center, spacing: 10) {
             Button(action: onToggle) {
                 Image(systemName: checked ? "checkmark.circle.fill" : "circle")
                     .font(.system(size: 20))
@@ -401,8 +485,8 @@ private struct TodoItemRow: View {
                         .font(.system(size: 16, weight: .semibold))
                         .foregroundStyle(checked ? .secondary : .primary)
                         .strikethrough(item.isCompleted)
-                    if !item.notes.isEmpty {
-                        Text(item.notes)
+                    if hasNotes {
+                        Text(item.notes.trimmingCharacters(in: .whitespacesAndNewlines))
                             .font(.system(size: 13))
                             .foregroundStyle(.secondary)
                             .lineLimit(2)

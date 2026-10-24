@@ -51,7 +51,9 @@ struct TemplateTray: View {
                 Text("テンプレート")
                     .font(.system(size: 16, weight: .bold))
                 HStack {
-                    circleButton("xmark", action: onClose)
+                    // Same construction as the pill on the right, so height and icon size match.
+                    pillButton("xmark", action: onClose)
+                        .glassEffect(.regular.interactive(), in: .circle)
                     Spacer()
                     // Select and ＋ (or delete while selecting) share one pill.
                     HStack(spacing: 0) {
@@ -86,17 +88,6 @@ struct TemplateTray: View {
                 .contentTransition(.symbolEffect(.replace))
         }
         .buttonStyle(.plain)
-    }
-
-    private func circleButton(_ icon: String, tint: Color = .primary, action: @escaping () -> Void) -> some View {
-        Button(action: action) {
-            Image(systemName: icon)
-                .font(.system(size: 15, weight: .semibold))
-                .foregroundStyle(tint)
-                .frame(width: 30, height: 30)
-        }
-        .buttonStyle(.glass)
-        .buttonBorderShape(.circle)
     }
 
     private func chip(_ template: EventTemplate) -> some View {
