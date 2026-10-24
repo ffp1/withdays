@@ -2,17 +2,28 @@ import EventKit
 import SwiftUI
 
 /// One day's events: a page of the day pager below the calendar.
+/// Rows behave like any List row (tap, swipe actions); only the add row and the empty space below
+/// hand sideways drags to the pager.
 struct DayEventList: View {
     let day: Date
     var onEdit: (EKEvent) -> Void
     var onDelete: (EKEvent) -> Void
     var onRelocate: (EKEvent, RelocationKind) -> Void
     var onAdd: () -> Void
+    var onPageDrag: (DragGesture.Value) -> Void
+    var onPageDragEnd: (DragGesture.Value) -> Void
 
     @Environment(CalendarStore.self) private var store
+    @State private var fillerHeight: CGFloat = 0
 
     /// The same space above and below every row, the first one included.
     private static let rowInsets = EdgeInsets(top: 10, leading: 16, bottom: 10, trailing: 16)
+
+    private var pageDrag: some Gesture {
+        DragGesture(minimumDistance: 20, coordinateSpace: .global)
+            .onChanged(onPageDrag)
+            .onEnded(onPageDragEnd)
+    }
 
     var body: some View {
         let start = CalendarMath.startOfDay(day)
@@ -27,10 +38,9 @@ struct DayEventList: View {
                     .listRowSeparator(.visible, edges: .bottom)
                     // No line above the first row.
                     .listRowSeparator(event == events.first ? .hidden : .visible, edges: .top)
+                    .listRowInsets(Self.rowInsets)
                     .contentShape(Rectangle())
                     .onTapGesture { onEdit(event) }
-                    .blocksPager()
-                    .listRowInsets(Self.rowInsets)
                     .swipeActions(edge: .trailing) {
                         Button(role: .destructive) { onDelete(event) } label: {
                             Image(systemName: "trash")
@@ -54,7 +64,7 @@ struct DayEventList: View {
                     }
             }
 
-            // A plain tap, not a Button: a sideways swipe that starts here pages the day without adding.
+            // A plain tap, not a Button: a sideways drag that starts here pages the day without adding.
             Label("予定を追加", systemImage: "plus")
                 .font(.system(size: 15, weight: .semibold))
                 .foregroundStyle(.secondary)
@@ -62,16 +72,19 @@ struct DayEventList: View {
                 .padding(.vertical, 4)
                 .contentShape(Rectangle())
                 .onTapGesture(perform: onAdd)
+                .simultaneousGesture(pageDrag)
                 // Hide only its own bottom line so the last event still gets a divider above this row.
                 .listRowSeparator(.hidden, edges: .bottom)
                 .listRowSeparator(events.isEmpty ? .hidden : .visible, edges: .top)
                 .listRowInsets(Self.rowInsets)
+
+            ListFiller(height: fillerHeight)
+                .simultaneousGesture(pageDrag)
         }
         .listStyle(.plain)
-        // The first row lost its top inset inside the pager; this restores the gap under the date band.
-        .safeAreaPadding(.top, 10)
         // Just enough to scroll the last row clear of the bottom buttons.
         .contentMargins(.bottom, 80, for: .scrollContent)
+        .tracksFillerHeight($fillerHeight)
     }
 }
 

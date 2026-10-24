@@ -69,8 +69,9 @@ private struct TodoContent: View {
     @State private var showDone = false
     /// Checked items wait 3 seconds before moving to 実行済み; checking again in that time cancels.
     @State private var pendingDone: [String: Task<Void, Never>] = [:]
-    /// The category page the pager shows.
-    @State private var page: String?
+    /// Categories page sideways; only the empty space below the rows drags it.
+    @State private var pager = PagerModel<String>()
+    @State private var fillerHeight: CGFloat = 0
     @State private var deletePulse = 0
     @State private var completedPulse = 0
     @State private var categorySheet: CategorySheet?
@@ -89,29 +90,12 @@ private struct TodoContent: View {
         let doneCount = todos.done[listID]?.count ?? 0
         VStack(spacing: 0) {
             CategoryBar(
-                onSelect: { list in withAnimation(.snappy) { page = list.calendarIdentifier } },
+                onSelect: { slide(to: $0.calendarIdentifier) },
                 onAdd: { categorySheet = .new },
                 onEdit: { categorySheet = .edit($0) }
             )
-            // Categories page exactly like the calendar's months: a paging scroll view, one list per page.
-            ScrollView(.horizontal) {
-                LazyHStack(spacing: 0) {
-                    ForEach(todos.visibleLists, id: \.calendarIdentifier) { list in
-                        self.list(for: list.calendarIdentifier, isCurrent: list.calendarIdentifier == listID)
-                            .containerRelativeFrame([.horizontal, .vertical])
-                    }
-                }
-                .scrollTargetLayout()
-            }
-            .scrollTargetBehavior(.paging)
-            .scrollIndicators(.hidden)
-            .scrollPosition(id: $page)
-            .onAppear { page = listID }
-            .onChange(of: page) { _, new in
-                if let new, new != todos.selectedListID { todos.selectedListID = new }
-            }
-            .onChange(of: listID) { _, new in
-                if page != new { page = new }
+            SlidingPager(model: pager, slots: pager.slots(current: listID, previous: neighbor(-1), next: neighbor(1))) { id, isCurrent in
+                list(for: id, isCurrent: isCurrent)
             }
         }
         .overlay(alignment: .bottom) {
@@ -198,7 +182,6 @@ private struct TodoContent: View {
                         onToggle: { toggle(item) }, onFold: {}, onTap: {}, onIndent: {}, onOutdent: {}
                     )
                     .swipeActions(edge: .trailing) { deleteButton(item.id) }
-                    .blocksPager()
                     .transition(.move(edge: .bottom).combined(with: .opacity))
                 }
             } else {
@@ -225,7 +208,6 @@ private struct TodoContent: View {
                     .swipeActions(edge: .trailing) {
                         if !editing { deleteButton(row.id) }
                     }
-                    .blocksPager()
                     .transition(.move(edge: .top).combined(with: .opacity))
                 }
                 if isCurrent, editingID == Self.newID {
@@ -237,18 +219,27 @@ private struct TodoContent: View {
                         onToggle: {}, onFold: {}, onTap: {}, onIndent: indentEditing, onOutdent: outdentEditing
                     )
                     .listRowSeparator(.hidden)
-                    .blocksPager()
                     .transition(.opacity.combined(with: .move(edge: .top)))
                 }
             }
 
+
+            // Empty space: tap adds an item (or only ends editing); a sideways drag changes the category.
+            ListFiller(height: fillerHeight)
+                .onTapGesture(perform: tapEmptySpace)
+                .simultaneousGesture(
+                    DragGesture(minimumDistance: 20, coordinateSpace: .global)
+                        .onChanged { pager.drag($0, hasPrevious: neighbor(-1) != nil, hasNext: neighbor(1) != nil) }
+                        .onEnded { value in
+                            pager.end(value, previous: neighbor(-1), next: neighbor(1)) { todos.selectedListID = $0 }
+                        }
+                )
         }
         .listStyle(.plain)
-        // Taps that no row takes (the empty space) add an item, or only end editing.
-        .contentShape(Rectangle())
-        .onTapGesture(perform: tapEmptySpace)
         // Room for the 実行済み pill and ＋ so the last rows can scroll clear of them.
         .contentMargins(.bottom, 96, for: .scrollContent)
+        // Only the visible page measures; its neighbours just reuse the height.
+        .tracksFillerHeight(isCurrent ? $fillerHeight : .constant(fillerHeight))
         .animation(.snappy, value: todos.rows(for: id))
     }
 
@@ -282,6 +273,24 @@ private struct TodoContent: View {
             Image(systemName: "trash")
         }
         .tint(.red)
+    }
+
+    /// The category before (-1) or after (1) the current one.
+    private func neighbor(_ step: Int) -> String? {
+        let lists = todos.visibleLists.map(\.calendarIdentifier)
+        guard let index = lists.firstIndex(of: listID), lists.indices.contains(index + step) else { return nil }
+        return lists[index + step]
+    }
+
+    /// A tapped category slides in from the side it sits on, even when it isn't adjacent.
+    private func slide(to id: String) {
+        guard id != listID else { return }
+        commitEditing()
+        let lists = todos.visibleLists.map(\.calendarIdentifier)
+        let side = (lists.firstIndex(of: id) ?? 0) > (lists.firstIndex(of: listID) ?? 0) ? 1 : -1
+        pager.slide(to: id, side: side, animation: .spring(response: 0.32, dampingFraction: 0.9)) {
+            todos.selectedListID = $0
+        }
     }
 
     // MARK: Editing

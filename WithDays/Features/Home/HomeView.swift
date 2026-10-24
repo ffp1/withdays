@@ -20,12 +20,9 @@ struct HomeView: View {
     private let baseMonth = CalendarMath.startOfMonth(.now)
 
     @State private var page: Int?
-    /// Day pages are offsets from the day the app launched.
-    private static let dayRange = -3650...3650
-    private let baseDay = CalendarMath.startOfDay(.now)
-    @State private var dayPage: Int?
-    /// During a jump of several days the neighbouring page temporarily shows the target day.
-    @State private var dayOverrides: [Int: Int] = [:]
+    /// The day the list below the calendar shows; it trails `selectedDate` while a slide runs.
+    @State private var listDay: Date
+    @State private var dayPager = PagerModel<Date>()
     /// Set when a double tap lands while an event sheet is opening: close it, then open a new event.
     @State private var newEventAfterDetail = false
     /// During a long jump the neighbouring page temporarily shows the target month, so the scroll covers one page.
@@ -51,7 +48,7 @@ struct HomeView: View {
         _page = State(initialValue: Self.pageRange.contains(offset) ? offset : 0)
         let selection = CalendarMath.defaultSelection(in: month)
         _selectedDate = State(initialValue: selection)
-        _dayPage = State(initialValue: CalendarMath.days(from: .now, to: selection))
+        _listDay = State(initialValue: selection)
     }
 
     private var isTodo: Bool { mode == HomeMode.todo.rawValue }
@@ -120,26 +117,12 @@ struct HomeView: View {
         .onChange(of: showMonthPicker) { _, shown in if shown { closeTray() } }
         .onChange(of: store.lastDeleted?.id) { _, _ in showToast() }
         .onChange(of: selectedDate) { _, new in
-            let target = CalendarMath.days(from: baseDay, to: new)
-            guard target != dayPage, let current = dayPage else { return }
-            // A quick, fairly sharp ease-out over one page. For a farther day the neighbouring page
-            // shows it first, then the pager silently swaps to the day's own page (as the months do).
-            let curve = Animation.timingCurve(0.16, 1, 0.3, 1, duration: 0.3)
-            if abs(target - current) == 1 {
-                withAnimation(curve) { dayPage = target }
-            } else {
-                let neighbor = current + (target > current ? 1 : -1)
-                dayOverrides = [neighbor: target]
-                withAnimation(curve) { dayPage = neighbor }
-                Task { @MainActor in
-                    try? await Task.sleep(for: .milliseconds(380))
-                    var transaction = Transaction()
-                    transaction.disablesAnimations = true
-                    withTransaction(transaction) {
-                        dayPage = target
-                        dayOverrides = [:]
-                    }
-                }
+            // Picked on the calendar (not swiped): slide the list there with a quick, sharp ease-out,
+            // one page wide however far the day is.
+            let day = CalendarMath.startOfDay(new)
+            guard !CalendarMath.isSameDay(day, listDay) else { return }
+            dayPager.slide(to: day, side: day > listDay ? 1 : -1, animation: .timingCurve(0.16, 1, 0.3, 1, duration: 0.3)) {
+                listDay = $0
             }
         }
         .spanDialog($spanRequest)
@@ -162,7 +145,7 @@ struct HomeView: View {
                 if !expanded {
                     Group {
                         dayBand
-                        dayPager
+                        dayPagerView
                             .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { listHeight = $0 }
                     }
                     .transition(.move(edge: .bottom).combined(with: .opacity))
@@ -198,31 +181,40 @@ struct HomeView: View {
         }
     }
 
-    /// Days page exactly like the months above: a paging scroll view, one day per page.
-    private var dayPager: some View {
-        ScrollView(.horizontal) {
-            LazyHStack(spacing: 0) {
-                ForEach(Self.dayRange, id: \.self) { offset in
-                    DayEventList(
-                        day: CalendarMath.addDays(dayOverrides[offset] ?? offset, to: baseDay),
-                        onEdit: { openEditor(.edit($0)) },
-                        onDelete: delete,
-                        onRelocate: startRelocation,
-                        onAdd: { openEditor(.new) }
-                    )
-                    .containerRelativeFrame([.horizontal, .vertical])
-                }
-            }
-            .scrollTargetLayout()
+    /// The day list pages sideways; only the add row, the empty space and the date band drag it,
+    /// so the rows keep their own swipe actions.
+    private var dayPagerView: some View {
+        SlidingPager(
+            model: dayPager,
+            slots: dayPager.slots(
+                current: listDay,
+                previous: CalendarMath.addDays(-1, to: listDay),
+                next: CalendarMath.addDays(1, to: listDay)
+            )
+        ) { day, _ in
+            DayEventList(
+                day: day,
+                onEdit: { openEditor(.edit($0)) },
+                onDelete: delete,
+                onRelocate: startRelocation,
+                onAdd: { openEditor(.new) },
+                onPageDrag: dragDay,
+                onPageDragEnd: endDayDrag
+            )
         }
-        .scrollTargetBehavior(.paging)
-        .scrollIndicators(.hidden)
-        .scrollPosition(id: $dayPage)
-        .onChange(of: dayPage) { _, new in
-            // Swiped to another day: select it, and follow it into its month.
-            guard let new else { return }
-            let day = CalendarMath.addDays(dayOverrides[new] ?? new, to: baseDay)
-            guard !CalendarMath.isSameDay(day, selectedDate) else { return }
+    }
+
+    private func dragDay(_ value: DragGesture.Value) {
+        dayPager.drag(value, hasPrevious: true, hasNext: true)
+    }
+
+    private func endDayDrag(_ value: DragGesture.Value) {
+        dayPager.end(
+            value,
+            previous: CalendarMath.addDays(-1, to: listDay),
+            next: CalendarMath.addDays(1, to: listDay)
+        ) { day in
+            listDay = day
             selectedDate = day
             if !CalendarMath.isSameMonth(day, displayedMonth) { jump(to: day) }
         }
@@ -353,10 +345,9 @@ struct HomeView: View {
         // The band also pages the day.
         .contentShape(Rectangle())
         .gesture(
-            DragGesture(minimumDistance: 20).onEnded { value in
-                guard abs(value.translation.width) > abs(value.translation.height), abs(value.translation.width) > 40 else { return }
-                selectedDate = CalendarMath.addDays(value.translation.width < 0 ? 1 : -1, to: selectedDate)
-            }
+            DragGesture(minimumDistance: 20, coordinateSpace: .global)
+                .onChanged(dragDay)
+                .onEnded(endDayDrag)
         )
     }
 

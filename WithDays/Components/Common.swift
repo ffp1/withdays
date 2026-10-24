@@ -1,7 +1,5 @@
 import EventKit
 import SwiftUI
-import UIKit
-import UIKit.UIGestureRecognizerSubclass
 
 /// A pending change to a repeating event, waiting for 「この予定のみ／今後すべて」.
 struct SpanRequest: Identifiable {
@@ -75,59 +73,5 @@ struct CheckMark: View {
         Image(systemName: "checkmark")
             .font(.system(size: 15, weight: .semibold))
             .foregroundStyle(Color.brand)
-    }
-}
-
-/// Touches that start on this view never page a horizontal pager around it (rows keep their swipe actions,
-/// lists still scroll vertically). It works at the UIKit level: the pager's pan must wait for this
-/// recognizer to fail, and it doesn't fail until the finger lifts.
-private struct PagerBlocker: UIGestureRecognizerRepresentable {
-    func makeUIGestureRecognizer(context: Context) -> TouchWatchRecognizer {
-        let recognizer = TouchWatchRecognizer()
-        recognizer.cancelsTouchesInView = false
-        recognizer.delaysTouchesBegan = false
-        recognizer.delaysTouchesEnded = false
-        recognizer.delegate = context.coordinator
-        return recognizer
-    }
-
-    func handleUIGestureRecognizerAction(_ recognizer: TouchWatchRecognizer, context: Context) {}
-
-    func makeCoordinator(converter: CoordinateSpaceConverter) -> Coordinator {
-        Coordinator()
-    }
-
-    final class Coordinator: NSObject, UIGestureRecognizerDelegate {
-        func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer, shouldRecognizeSimultaneouslyWith other: UIGestureRecognizer) -> Bool {
-            true
-        }
-
-        /// Only a horizontal pager's pan has to wait; vertical lists and swipe actions are untouched.
-        func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer, shouldBeRequiredToFailBy other: UIGestureRecognizer) -> Bool {
-            guard let scrollView = other.view as? UIScrollView, other === scrollView.panGestureRecognizer else { return false }
-            return scrollView.contentSize.width > scrollView.bounds.width + 1
-                && scrollView.contentSize.height <= scrollView.bounds.height + 1
-        }
-    }
-}
-
-/// Recognizes on touch-down and ends on lift-off.
-final class TouchWatchRecognizer: UIGestureRecognizer {
-    override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent) {
-        state = .began
-    }
-
-    override func touchesEnded(_ touches: Set<UITouch>, with event: UIEvent) {
-        state = .ended
-    }
-
-    override func touchesCancelled(_ touches: Set<UITouch>, with event: UIEvent) {
-        state = .cancelled
-    }
-}
-
-extension View {
-    func blocksPager() -> some View {
-        gesture(PagerBlocker())
     }
 }
