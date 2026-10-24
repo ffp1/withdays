@@ -64,8 +64,20 @@ final class TodoStore {
         }
     }
 
+    /// Why the last access request failed, shown on the permission screen.
+    private(set) var accessError: String?
+
     func requestAccess() async {
-        _ = try? await eventStore.requestFullAccessToReminders()
+        do {
+            _ = try await eventStore.requestFullAccessToReminders()
+            accessError = nil
+        } catch {
+            accessError = error.localizedDescription
+        }
+        refreshStatus()
+    }
+
+    func refreshStatus() {
         status = EKEventStore.authorizationStatus(for: .reminder)
         if access == .granted { reload() }
     }

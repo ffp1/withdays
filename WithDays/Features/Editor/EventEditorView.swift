@@ -41,7 +41,7 @@ struct EventEditorView: View {
     @State private var path: [EditorPath] = []
     @State private var spanRequest: SpanRequest?
     @State private var errorMessage: String?
-    @FocusState private var titleFocused: Bool
+    @State private var titleFocused = false
     /// Filled a moment after typing pauses, so nothing else changes while the keyboard is still composing.
     @State private var suggestions: [EKEvent] = []
 
@@ -88,11 +88,14 @@ struct EventEditorView: View {
         NavigationStack(path: $path) {
             Form {
                 Section {
-                    TextField("タイトル", text: $draft.title)
-                        .font(.system(size: 17 * 1.2, weight: .bold))
-                        .focused($titleFocused)
-                        .submitLabel(.done)
-                        .anchorPreference(key: TitleFieldAnchor.self, value: .bounds) { $0 }
+                    IMETextField(
+                        placeholder: "タイトル",
+                        text: $draft.title,
+                        isFocused: $titleFocused,
+                        font: .systemFont(ofSize: 17 * 1.2, weight: .bold)
+                    )
+                    .frame(minHeight: 30)
+                    .anchorPreference(key: TitleFieldAnchor.self, value: .bounds) { $0 }
                     NavigationLink(value: EditorPath.calendar) {
                         HStack {
                             Text("カレンダー")

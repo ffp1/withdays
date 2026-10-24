@@ -12,7 +12,8 @@ enum HomeMode: String {
 struct HomeView: View {
     @Environment(CalendarStore.self) private var store
     @Environment(TemplateStore.self) private var templates
-    @AppStorage(SettingsKey.homeMode) private var mode = HomeMode.calendar.rawValue
+    /// Plain state (saved on change) so switching can animate; @AppStorage updates don't carry the animation.
+    @State private var mode = UserDefaults.standard.string(forKey: SettingsKey.homeMode) ?? HomeMode.calendar.rawValue
 
     /// Pages are month offsets from the month the app launched in.
     private static let pageRange = -600...600
@@ -53,13 +54,23 @@ struct HomeView: View {
 
     var body: some View {
         NavigationStack(path: $path) {
-            Group {
+            ZStack {
                 if isTodo {
                     TodoView()
+                        .transition(.asymmetric(
+                            insertion: .move(edge: .trailing).combined(with: .opacity),
+                            removal: .move(edge: .trailing).combined(with: .opacity)
+                        ))
                 } else {
                     calendarContent
+                        .transition(.asymmetric(
+                            insertion: .move(edge: .leading).combined(with: .opacity),
+                            removal: .move(edge: .leading).combined(with: .opacity)
+                        ))
                 }
             }
+            .animation(.snappy(duration: 0.35), value: mode)
+            .onChange(of: mode) { _, new in UserDefaults.standard.set(new, forKey: SettingsKey.homeMode) }
             .toolbar { toolbar }
             .navigationBarTitleDisplayMode(.inline)
             .navigationDestination(for: HomeRoute.self) { route in
@@ -142,6 +153,7 @@ struct HomeView: View {
                 Text("ToDo")
                     .font(.system(size: 20, weight: .bold))
                     .fixedSize()
+                    .transition(.blurReplace)
             } else {
                 Button {
                     showMonthPicker = true

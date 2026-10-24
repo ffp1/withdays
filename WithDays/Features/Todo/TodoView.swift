@@ -4,25 +4,39 @@ import SwiftUI
 /// ToDo mode: category bar, then the list. Tap to edit in place; tap empty space or ＋ to add.
 struct TodoView: View {
     @Environment(TodoStore.self) private var todos
+    @Environment(\.scenePhase) private var scenePhase
 
     var body: some View {
-        switch todos.access {
-        case .granted:
-            TodoContent()
-        case .undetermined:
-            Color(.systemBackground)
-                .task { await todos.requestAccess() }
-        case .denied:
-            ContentUnavailableView {
-                Label("リマインダーへのアクセスが必要です", systemImage: "checklist")
-            } actions: {
-                Button("設定を開く") {
-                    if let url = URL(string: UIApplication.openSettingsURLString) {
-                        UIApplication.shared.open(url)
-                    }
+        Group {
+            switch todos.access {
+            case .granted:
+                TodoContent()
+            case .undetermined:
+                // Asks on its own, but keeps a button in case the system prompt doesn't come up.
+                ContentUnavailableView {
+                    Label("リマインダーへのアクセス", systemImage: "checklist")
+                } description: {
+                    if let error = todos.accessError { Text(error) }
+                } actions: {
+                    Button("アクセスを許可") { Task { await todos.requestAccess() } }
+                        .buttonStyle(.glassProminent)
                 }
-                .buttonStyle(.glassProminent)
+                .task { await todos.requestAccess() }
+            case .denied:
+                ContentUnavailableView {
+                    Label("リマインダーへのアクセスが必要です", systemImage: "checklist")
+                } actions: {
+                    Button("設定を開く") {
+                        if let url = URL(string: UIApplication.openSettingsURLString) {
+                            UIApplication.shared.open(url)
+                        }
+                    }
+                    .buttonStyle(.glassProminent)
+                }
             }
+        }
+        .onChange(of: scenePhase) { _, phase in
+            if phase == .active { todos.refreshStatus() }
         }
     }
 }
