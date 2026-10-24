@@ -53,12 +53,6 @@ enum CategorySheet: Identifiable {
     }
 }
 
-private struct PageSlot: Identifiable, Equatable {
-    let id: String
-    /// -1 left, 0 current, 1 right.
-    let slot: Int
-}
-
 private enum TodoField: Hashable {
     case title, notes
 }
@@ -75,11 +69,9 @@ private struct TodoContent: View {
     @State private var showDone = false
     /// Checked items wait 3 seconds before moving to 実行済み; checking again in that time cancels.
     @State private var pendingDone: [String: Task<Void, Never>] = [:]
-    /// Horizontal paging between categories.
-    @State private var dragOffset: CGFloat = 0
-    @State private var pageWidth: CGFloat = 0
-    /// While a tapped category slides in, it takes the neighbour slot on its side.
-    @State private var incoming: PageSlot?
+    /// The category page the pager shows.
+    @State private var page: String?
+    @State private var deletePulse = 0
     @State private var completedPulse = 0
     @State private var categorySheet: CategorySheet?
     @State private var errorMessage: String?
@@ -97,20 +89,30 @@ private struct TodoContent: View {
         let doneCount = todos.done[listID]?.count ?? 0
         VStack(spacing: 0) {
             CategoryBar(
-                onSelect: { slide(to: $0.calendarIdentifier) },
+                onSelect: { list in withAnimation(.snappy) { page = list.calendarIdentifier } },
                 onAdd: { categorySheet = .new },
                 onEdit: { categorySheet = .edit($0) }
             )
-            // Pages follow the finger like the calendar's months: neighbours sit one width to either side.
-            ZStack {
-                ForEach(pageSlots) { page in
-                    list(for: page.id, isCurrent: page.slot == 0)
-                        .offset(x: CGFloat(page.slot) * pageWidth + dragOffset)
-                        .allowsHitTesting(page.slot == 0)
+            // Categories page exactly like the calendar's months: a paging scroll view, one list per page.
+            ScrollView(.horizontal) {
+                LazyHStack(spacing: 0) {
+                    ForEach(todos.visibleLists, id: \.calendarIdentifier) { list in
+                        self.list(for: list.calendarIdentifier, isCurrent: list.calendarIdentifier == listID)
+                            .containerRelativeFrame([.horizontal, .vertical])
+                    }
                 }
+                .scrollTargetLayout()
             }
-            .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { pageWidth = $0 }
-            .clipped()
+            .scrollTargetBehavior(.paging)
+            .scrollIndicators(.hidden)
+            .scrollPosition(id: $page)
+            .onAppear { page = listID }
+            .onChange(of: page) { _, new in
+                if let new, new != todos.selectedListID { todos.selectedListID = new }
+            }
+            .onChange(of: listID) { _, new in
+                if page != new { page = new }
+            }
         }
         .overlay(alignment: .bottom) {
             HStack(spacing: 12) {
@@ -171,18 +173,8 @@ private struct TodoContent: View {
         .sensoryFeedback(.selection, trigger: listID)
         .sensoryFeedback(.impact(weight: .light), trigger: showDone)
         .sensoryFeedback(.success, trigger: completedPulse)
+        .sensoryFeedback(.impact(weight: .medium), trigger: deletePulse)
         .errorAlert($errorMessage)
-    }
-
-    /// The current list plus its neighbours, or during a tap-jump the current list and the incoming one.
-    private var pageSlots: [PageSlot] {
-        if let incoming { return [PageSlot(id: listID, slot: 0), incoming] }
-        let lists = todos.visibleLists.map(\.calendarIdentifier)
-        guard let index = lists.firstIndex(of: listID) else { return [PageSlot(id: listID, slot: 0)] }
-        var slots = [PageSlot(id: listID, slot: 0)]
-        if index > 0 { slots.append(PageSlot(id: lists[index - 1], slot: -1)) }
-        if index + 1 < lists.count { slots.append(PageSlot(id: lists[index + 1], slot: 1)) }
-        return slots
     }
 
     private func list(for id: String, isCurrent: Bool) -> some View {
@@ -243,16 +235,11 @@ private struct TodoContent: View {
                 }
             }
 
-            // Empty space: tap adds an item (or only ends editing); drag sideways to change the category.
-            Color.clear
-                .frame(height: 320)
-                .contentShape(Rectangle())
-                .onTapGesture(perform: tapEmptySpace)
-                .gesture(pageDrag)
-                .listRowSeparator(.hidden)
-                .listRowBackground(Color.clear)
         }
         .listStyle(.plain)
+        // Taps that no row takes (the empty space) add an item, or only end editing.
+        .contentShape(Rectangle())
+        .onTapGesture(perform: tapEmptySpace)
         // Room for the 実行済み pill and ＋ so the last rows can scroll clear of them.
         .contentMargins(.bottom, 96, for: .scrollContent)
         .animation(.snappy, value: todos.rows(for: id))
@@ -282,61 +269,12 @@ private struct TodoContent: View {
 
     private func deleteButton(_ id: String) -> some View {
         Button(role: .destructive) {
+            deletePulse += 1
             run { try todos.delete(id) }
         } label: {
             Image(systemName: "trash")
         }
         .tint(.red)
-    }
-
-    /// Follows the finger; past a quarter width (or a flick) it finishes the slide to the neighbour.
-    private var pageDrag: some Gesture {
-        DragGesture(minimumDistance: 20, coordinateSpace: .global)
-            .onChanged { value in
-                guard incoming == nil, abs(value.translation.width) > abs(value.translation.height) else { return }
-                let side = value.translation.width < 0 ? 1 : -1
-                // Resist at the first and last category.
-                let hasNeighbor = pageSlots.contains { $0.slot == side }
-                dragOffset = value.translation.width * (hasNeighbor ? 1 : 0.25)
-            }
-            .onEnded { value in
-                guard incoming == nil else { return }
-                let width = max(pageWidth, 1)
-                let moved = value.translation.width, flicked = value.predictedEndTranslation.width
-                let side = moved < -width / 4 || flicked < -width / 2 ? 1 : (moved > width / 4 || flicked > width / 2 ? -1 : 0)
-                guard side != 0, let target = pageSlots.first(where: { $0.slot == side }) else {
-                    withAnimation(.snappy(duration: 0.25)) { dragOffset = 0 }
-                    return
-                }
-                finishSlide(to: target)
-            }
-    }
-
-    /// A tap on another category slides it in from the side it sits on, even when it isn't adjacent.
-    private func slide(to id: String) {
-        guard id != listID, incoming == nil else { return }
-        let lists = todos.visibleLists.map(\.calendarIdentifier)
-        let from = lists.firstIndex(of: listID) ?? 0
-        let to = lists.firstIndex(of: id) ?? 0
-        let target = PageSlot(id: id, slot: to > from ? 1 : -1)
-        incoming = target
-        finishSlide(to: target)
-    }
-
-    private func finishSlide(to target: PageSlot) {
-        commitEditing()
-        withAnimation(.snappy(duration: 0.3)) {
-            dragOffset = -CGFloat(target.slot) * pageWidth
-        } completion: {
-            // Swap without animation: the incoming page is already where the current one will be.
-            var transaction = Transaction()
-            transaction.disablesAnimations = true
-            withTransaction(transaction) {
-                todos.selectedListID = target.id
-                incoming = nil
-                dragOffset = 0
-            }
-        }
     }
 
     // MARK: Editing

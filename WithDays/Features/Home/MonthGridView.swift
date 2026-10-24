@@ -14,6 +14,11 @@ enum GridMetrics {
     static let longPress: Double = 0.5
 }
 
+extension EnvironmentValues {
+    /// Week row height; the calendar grows into the list's space while moving / duplicating.
+    @Entry var gridRowHeight: CGFloat = GridMetrics.rowHeight
+}
+
 enum RelocationKind {
     case move, duplicate
 }
@@ -46,6 +51,7 @@ struct MonthGridView: View {
     let actions: GridActions
 
     @Environment(CalendarStore.self) private var store
+    @Environment(\.gridRowHeight) private var rowHeight
     @AppStorage(SettingsKey.weekStart, store: AppGroup.defaults) private var weekStart = 1
     @State private var width: CGFloat = 0
 
@@ -75,7 +81,7 @@ struct MonthGridView: View {
         .gesture(
             DragGesture(minimumDistance: 8).onChanged { value in
                 guard width > 0 else { return }
-                let row = Int((value.location.y - GridMetrics.weekdayHeight) / GridMetrics.rowHeight)
+                let row = Int((value.location.y - GridMetrics.weekdayHeight) / rowHeight)
                 let column = Int(value.location.x / (width / 7))
                 guard (0..<6).contains(row), (0..<7).contains(column) else { return }
                 actions.onTargetDrag(days[row * 7 + column])
@@ -110,6 +116,7 @@ private struct WeekRow: View {
     let relocation: Relocation?
     let actions: GridActions
 
+    @Environment(\.gridRowHeight) private var rowHeight
     @State private var dropColumn: Int?
 
     var body: some View {
@@ -128,7 +135,7 @@ private struct WeekRow: View {
                             relocating: relocation != nil,
                             actions: actions
                         )
-                        .frame(width: width, height: GridMetrics.rowHeight, alignment: .topLeading)
+                        .frame(width: width, height: rowHeight, alignment: .topLeading)
                         .zIndex(CalendarMath.isSameDay(day, .now) ? 1 : 0)
                     }
                 }
@@ -136,7 +143,7 @@ private struct WeekRow: View {
                 ForEach(placed) { item in
                     let top = GridMetrics.laneTop + CGFloat(item.lane) * GridMetrics.laneHeight
                     // Only lines that fit completely; the row is not clipped so today's number can grow past it.
-                    if top + GridMetrics.laneHeight - 2 <= GridMetrics.rowHeight {
+                    if top + GridMetrics.laneHeight - 2 <= rowHeight {
                         let span = CGFloat(item.endCol - item.startCol + 1)
                         let dayAt: (CGPoint) -> Date = { location in
                             week[min(item.endCol, item.startCol + Int(location.x / width))]
@@ -159,13 +166,13 @@ private struct WeekRow: View {
                 delegate: TemplateDropDelegate(columnWidth: width, week: week, column: $dropColumn, onDrop: actions.onTemplateDrop)
             )
         }
-        .frame(height: GridMetrics.rowHeight)
+        .frame(height: rowHeight)
     }
 
     private func chipOpacity(_ item: PlacedEvent) -> Double {
         if item.isPinned { return 1 }
-        // The event being moved stays visible but faded at its old place.
-        if let relocation, relocation.kind == .move, relocation.event == item.event { return 0.3 }
+        // While moving / duplicating, only the chosen event (and its previews) stay solid.
+        if let relocation { return relocation.event == item.event ? 1 : 0.25 }
         let inMonth = CalendarMath.isSameMonth(week[item.startCol], month) || CalendarMath.isSameMonth(week[item.endCol], month)
         return inMonth ? 1 : 0.45
     }

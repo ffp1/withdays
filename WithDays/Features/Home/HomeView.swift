@@ -20,6 +20,12 @@ struct HomeView: View {
     private let baseMonth = CalendarMath.startOfMonth(.now)
 
     @State private var page: Int?
+    /// Day pages are offsets from the day the app launched.
+    private static let dayRange = -3650...3650
+    private let baseDay = CalendarMath.startOfDay(.now)
+    @State private var dayPage: Int?
+    /// Set when a double tap lands while an event sheet is opening: close it, then open a new event.
+    @State private var newEventAfterDetail = false
     /// During a long jump the neighbouring page temporarily shows the target month, so the scroll covers one page.
     @State private var pageMonths: [Int: Int] = [:]
     @State private var selectedDate: Date
@@ -32,7 +38,6 @@ struct HomeView: View {
     @State private var listHeight: CGFloat = 300
     @State private var relocation: Relocation?
     @State private var toast: CalendarStore.DeletedEvent?
-    @State private var lastDoubleTap = Date.distantPast
     @State private var spanRequest: SpanRequest?
     @State private var errorMessage: String?
     @State private var todayPulse = 0
@@ -42,7 +47,9 @@ struct HomeView: View {
         let month = stored > 0 ? CalendarMath.startOfMonth(Date(timeIntervalSince1970: stored)) : CalendarMath.startOfMonth(.now)
         let offset = CalendarMath.months(from: .now, to: month)
         _page = State(initialValue: Self.pageRange.contains(offset) ? offset : 0)
-        _selectedDate = State(initialValue: CalendarMath.defaultSelection(in: month))
+        let selection = CalendarMath.defaultSelection(in: month)
+        _selectedDate = State(initialValue: selection)
+        _dayPage = State(initialValue: CalendarMath.days(from: .now, to: selection))
     }
 
     private var isTodo: Bool { mode == HomeMode.todo.rawValue }
@@ -95,16 +102,30 @@ struct HomeView: View {
         .sheet(item: $editor) { mode in
             EventEditorView(mode: mode, day: selectedDate)
         }
-        .sheet(item: $detail) { ref in
+        .sheet(item: $detail, onDismiss: {
+            if newEventAfterDetail {
+                newEventAfterDetail = false
+                editor = .new
+            }
+        }) { ref in
             EventDetailSheet(event: ref.event) { kind in startRelocation(ref.event, kind) }
         }
         .sensoryFeedback(.impact(weight: .medium), trigger: detail?.id) { _, new in new != nil }
         .sensoryFeedback(.impact(weight: .medium), trigger: showTemplates) { _, new in new }
         .sensoryFeedback(.impact(weight: .heavy), trigger: todayPulse)
-        .sensoryFeedback(.success, trigger: toast?.id) { _, new in new != nil }
+        .sensoryFeedback(.impact(weight: .medium), trigger: store.lastDeleted?.id) { _, new in new != nil }
         .onChange(of: path) { _, new in if !new.isEmpty { closeTray() } }
         .onChange(of: showMonthPicker) { _, shown in if shown { closeTray() } }
         .onChange(of: store.lastDeleted?.id) { _, _ in showToast() }
+        .onChange(of: selectedDate) { _, new in
+            let target = CalendarMath.days(from: baseDay, to: new)
+            guard target != dayPage else { return }
+            if let current = dayPage, abs(target - current) == 1 {
+                withAnimation(.easeOut(duration: 0.5)) { dayPage = target }
+            } else {
+                dayPage = target
+            }
+        }
         .spanDialog($spanRequest)
         .errorAlert($errorMessage)
         .onOpenURL(perform: open)
@@ -113,41 +134,81 @@ struct HomeView: View {
     // MARK: Calendar
 
     private var calendarContent: some View {
-        VStack(spacing: 0) {
-            monthPager
-            dayBand
-            DayEventList(
-                day: selectedDate,
-                onEdit: { openEditor(.edit($0)) },
-                onDelete: delete,
-                onRelocate: startRelocation,
-                onAdd: { openEditor(.new) },
-                onSwipeDay: { delta in
-                    let day = CalendarMath.addDays(delta, to: selectedDate)
-                    selectedDate = day
-                    if !CalendarMath.isSameMonth(day, displayedMonth) { jump(to: day) }
+        GeometryReader { geo in
+            // While moving / duplicating, the day list goes away and the calendar takes its space,
+            // leaving room for the bottom buttons.
+            let expanded = relocation != nil
+            let pagerHeight = expanded ? max(GridMetrics.height, geo.size.height - 56 - 20 - 12) : GridMetrics.height
+            VStack(spacing: 0) {
+                monthPager
+                    .frame(height: pagerHeight)
+                    .environment(\.gridRowHeight, (pagerHeight - GridMetrics.weekdayHeight) / 6)
+                if !expanded {
+                    Group {
+                        dayBand
+                        dayPager
+                            .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { listHeight = $0 }
+                    }
+                    .transition(.move(edge: .bottom).combined(with: .opacity))
+                } else {
+                    Spacer(minLength: 0)
                 }
-            )
-            .allowsHitTesting(relocation == nil)
-            .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { listHeight = $0 }
+            }
         }
         .overlay(alignment: .bottom) {
-            HStack {
-                if relocation != nil {
-                    circleButton("xmark", prominent: false, action: cancelRelocation)
-                } else {
-                    circleButton("arrow.uturn.left", prominent: false, action: backToThisMonth)
+            HStack(spacing: 10) {
+                // The same two buttons change their symbols, so the switch animates.
+                circleButton(relocation != nil ? "xmark" : "arrow.uturn.left", prominent: false) {
+                    if relocation != nil { cancelRelocation() } else { backToThisMonth() }
                 }
-                Spacer()
-                if relocation != nil {
-                    circleButton("checkmark", prominent: true, action: confirmRelocation)
-                        .disabled(relocation?.targets.isEmpty ?? true)
+                if let relocation {
+                    Text(relocation.kind == .move ? "移動先を選択" : "複製先を選択")
+                        .font(.system(size: 15, weight: .bold))
+                        .lineLimit(1)
+                        .frame(maxWidth: .infinity)
+                        .frame(height: 56)
+                        .glassEffect(.regular, in: .capsule)
+                        .transition(.scale(scale: 0.8).combined(with: .opacity))
                 } else {
-                    circleButton("plus", prominent: true) { openEditor(.new) }
+                    Spacer()
                 }
+                circleButton(relocation != nil ? "checkmark" : "plus", prominent: true) {
+                    if relocation != nil { confirmRelocation() } else { openEditor(.new) }
+                }
+                .disabled(relocation?.targets.isEmpty ?? false)
             }
             .padding(20)
             .opacity(showTemplates ? 0 : 1)
+        }
+    }
+
+    /// Days page exactly like the months above: a paging scroll view, one day per page.
+    private var dayPager: some View {
+        ScrollView(.horizontal) {
+            LazyHStack(spacing: 0) {
+                ForEach(Self.dayRange, id: \.self) { offset in
+                    DayEventList(
+                        day: CalendarMath.addDays(offset, to: baseDay),
+                        onEdit: { openEditor(.edit($0)) },
+                        onDelete: delete,
+                        onRelocate: startRelocation,
+                        onAdd: { openEditor(.new) }
+                    )
+                    .containerRelativeFrame([.horizontal, .vertical])
+                }
+            }
+            .scrollTargetLayout()
+        }
+        .scrollTargetBehavior(.paging)
+        .scrollIndicators(.hidden)
+        .scrollPosition(id: $dayPage)
+        .onChange(of: dayPage) { _, new in
+            // Swiped to another day: select it, and follow it into its month.
+            guard let new else { return }
+            let day = CalendarMath.addDays(new, to: baseDay)
+            guard !CalendarMath.isSameDay(day, selectedDate) else { return }
+            selectedDate = day
+            if !CalendarMath.isSameMonth(day, displayedMonth) { jump(to: day) }
         }
     }
 
@@ -157,6 +218,7 @@ struct HomeView: View {
             if isTodo {
                 Text("ToDo")
                     .font(.system(size: 20, weight: .bold))
+                    .foregroundStyle(Color.brand)
                     .fixedSize()
                     .transition(.blurReplace)
             } else {
@@ -220,7 +282,6 @@ struct HomeView: View {
         .scrollIndicators(.hidden)
         .scrollPosition(id: $page)
         .scrollDisabled(relocation != nil)
-        .frame(height: GridMetrics.height)
         .environment(\.todayPulse, todayPulse)
         .sensoryFeedback(.selection, trigger: selectedDate)
         .sensoryFeedback(.impact(weight: .light), trigger: page)
@@ -234,9 +295,14 @@ struct HomeView: View {
         GridActions(
             onDayTap: { selectedDate = $0 },
             onDayDoubleTap: { day in
-                lastDoubleTap = .now
                 selectedDate = day
-                openEditor(.new)
+                if detail != nil {
+                    // The first tap already opened the event; swap it for a new event.
+                    newEventAfterDetail = true
+                    detail = nil
+                } else {
+                    openEditor(.new)
+                }
             },
             onDayLongPress: { day in
                 selectedDate = day
@@ -276,6 +342,7 @@ struct HomeView: View {
             .font(.system(size: prominent ? 26.4 : 24, weight: .semibold))
             .foregroundStyle(prominent ? Color.white : Color.primary)
             .frame(width: 56, height: 56)
+            .contentTransition(.symbolEffect(.replace))
         if prominent {
             Button(action: action) { label }
                 .buttonStyle(.glassProminent)
@@ -331,7 +398,7 @@ struct HomeView: View {
                 .glassEffect(.regular, in: .capsule)
                 .padding(.horizontal, 20 + 56 + 10)
                 .padding(.bottom, 20)
-                .transition(.move(edge: .bottom).combined(with: .opacity))
+                .transition(.offset(y: 140).combined(with: .opacity))
             }
         }
     }
@@ -354,17 +421,13 @@ struct HomeView: View {
         trayDragging = false
     }
 
-    /// On the already selected day a single tap opens the event; a double tap (new event) still wins.
+    /// On the already selected day a single tap opens the event right away; a double tap then swaps it for a new event.
     private func eventTapped(_ event: EKEvent, on day: Date) {
         guard CalendarMath.isSameDay(day, selectedDate) else {
             selectedDate = day
             return
         }
-        Task { @MainActor in
-            try? await Task.sleep(for: .milliseconds(280))
-            guard Date.now.timeIntervalSince(lastDoubleTap) > 0.45 else { return }
-            openDetail(event)
-        }
+        openDetail(event)
     }
 
     /// Scrolls to the month of `date`; the selected day is left alone.
@@ -438,7 +501,7 @@ struct HomeView: View {
 
     private func showToast() {
         guard let deleted = store.lastDeleted else { return }
-        withAnimation(.snappy) { toast = deleted }
+        withAnimation(.spring(response: 0.38, dampingFraction: 0.68)) { toast = deleted }
         Task { @MainActor in
             try? await Task.sleep(for: .seconds(3))
             guard toast?.id == deleted.id else { return }
