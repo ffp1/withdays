@@ -1,5 +1,7 @@
 import EventKit
 import SwiftUI
+import UIKit
+import UIKit.UIGestureRecognizerSubclass
 
 /// A pending change to a repeating event, waiting for 「この予定のみ／今後すべて」.
 struct SpanRequest: Identifiable {
@@ -77,17 +79,59 @@ struct CheckMark: View {
 }
 
 /// While a finger is on this view, `locked` is true; pagers use it to stay put so the row gets the swipe.
-/// `@GestureState` resets on its own even when the system cancels the touch.
+/// A SwiftUI drag gesture here would swallow the List's swipe actions, so this watches touches with a
+/// UIKit recognizer that never blocks or delays anything else.
 private struct PagerLock: ViewModifier {
     @Binding var locked: Bool
-    @GestureState private var touching = false
 
     func body(content: Content) -> some View {
-        content
-            .simultaneousGesture(
-                DragGesture(minimumDistance: 0).updating($touching) { _, state, _ in state = true }
-            )
-            .onChange(of: touching) { _, new in locked = new }
+        content.gesture(TouchWatcher { locked = $0 })
+    }
+}
+
+private struct TouchWatcher: UIGestureRecognizerRepresentable {
+    var onChange: (Bool) -> Void
+
+    func makeUIGestureRecognizer(context: Context) -> TouchWatchRecognizer {
+        let recognizer = TouchWatchRecognizer()
+        recognizer.cancelsTouchesInView = false
+        recognizer.delaysTouchesBegan = false
+        recognizer.delaysTouchesEnded = false
+        recognizer.delegate = context.coordinator
+        return recognizer
+    }
+
+    func handleUIGestureRecognizerAction(_ recognizer: TouchWatchRecognizer, context: Context) {
+        switch recognizer.state {
+        case .began: onChange(true)
+        case .ended, .cancelled, .failed: onChange(false)
+        default: break
+        }
+    }
+
+    func makeCoordinator(converter: CoordinateSpaceConverter) -> Coordinator {
+        Coordinator()
+    }
+
+    final class Coordinator: NSObject, UIGestureRecognizerDelegate {
+        func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer, shouldRecognizeSimultaneouslyWith other: UIGestureRecognizer) -> Bool {
+            true
+        }
+    }
+}
+
+/// Reports touch-down and lift-off only.
+final class TouchWatchRecognizer: UIGestureRecognizer {
+    override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent) {
+        state = .began
+    }
+
+    override func touchesEnded(_ touches: Set<UITouch>, with event: UIEvent) {
+        state = .ended
+    }
+
+    override func touchesCancelled(_ touches: Set<UITouch>, with event: UIEvent) {
+        state = .cancelled
     }
 }
 

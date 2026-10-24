@@ -24,6 +24,8 @@ struct HomeView: View {
     private static let dayRange = -3650...3650
     private let baseDay = CalendarMath.startOfDay(.now)
     @State private var dayPage: Int?
+    /// During a jump of several days the neighbouring page temporarily shows the target day.
+    @State private var dayOverrides: [Int: Int] = [:]
     /// Set when a double tap lands while an event sheet is opening: close it, then open a new event.
     @State private var newEventAfterDetail = false
     /// A finger is on a day-list row: the day pager must not take the swipe.
@@ -121,12 +123,25 @@ struct HomeView: View {
         .onChange(of: store.lastDeleted?.id) { _, _ in showToast() }
         .onChange(of: selectedDate) { _, new in
             let target = CalendarMath.days(from: baseDay, to: new)
-            guard target != dayPage else { return }
-            if let current = dayPage, abs(target - current) == 1 {
-                // A quick, fairly sharp ease-out.
-                withAnimation(.timingCurve(0.16, 1, 0.3, 1, duration: 0.3)) { dayPage = target }
+            guard target != dayPage, let current = dayPage else { return }
+            // A quick, fairly sharp ease-out over one page. For a farther day the neighbouring page
+            // shows it first, then the pager silently swaps to the day's own page (as the months do).
+            let curve = Animation.timingCurve(0.16, 1, 0.3, 1, duration: 0.3)
+            if abs(target - current) == 1 {
+                withAnimation(curve) { dayPage = target }
             } else {
-                dayPage = target
+                let neighbor = current + (target > current ? 1 : -1)
+                dayOverrides = [neighbor: target]
+                withAnimation(curve) { dayPage = neighbor }
+                Task { @MainActor in
+                    try? await Task.sleep(for: .milliseconds(380))
+                    var transaction = Transaction()
+                    transaction.disablesAnimations = true
+                    withTransaction(transaction) {
+                        dayPage = target
+                        dayOverrides = [:]
+                    }
+                }
             }
         }
         .spanDialog($spanRequest)
@@ -191,7 +206,7 @@ struct HomeView: View {
             LazyHStack(spacing: 0) {
                 ForEach(Self.dayRange, id: \.self) { offset in
                     DayEventList(
-                        day: CalendarMath.addDays(offset, to: baseDay),
+                        day: CalendarMath.addDays(dayOverrides[offset] ?? offset, to: baseDay),
                         onEdit: { openEditor(.edit($0)) },
                         onDelete: delete,
                         onRelocate: startRelocation,
@@ -210,7 +225,7 @@ struct HomeView: View {
         .onChange(of: dayPage) { _, new in
             // Swiped to another day: select it, and follow it into its month.
             guard let new else { return }
-            let day = CalendarMath.addDays(new, to: baseDay)
+            let day = CalendarMath.addDays(dayOverrides[new] ?? new, to: baseDay)
             guard !CalendarMath.isSameDay(day, selectedDate) else { return }
             selectedDate = day
             if !CalendarMath.isSameMonth(day, displayedMonth) { jump(to: day) }

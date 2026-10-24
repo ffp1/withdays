@@ -13,6 +13,9 @@ struct DayEventList: View {
 
     @Environment(CalendarStore.self) private var store
 
+    /// The same space above and below every row, the first one included.
+    private static let rowInsets = EdgeInsets(top: 10, leading: 16, bottom: 10, trailing: 16)
+
     var body: some View {
         let start = CalendarMath.startOfDay(day)
         let end = CalendarMath.addDays(1, to: start)
@@ -29,6 +32,7 @@ struct DayEventList: View {
                     .contentShape(Rectangle())
                     .onTapGesture { onEdit(event) }
                     .locksPager($pagerLocked)
+                    .listRowInsets(Self.rowInsets)
                     .swipeActions(edge: .trailing) {
                         Button(role: .destructive) { onDelete(event) } label: {
                             Image(systemName: "trash")
@@ -63,9 +67,10 @@ struct DayEventList: View {
                 // Hide only its own bottom line so the last event still gets a divider above this row.
                 .listRowSeparator(.hidden, edges: .bottom)
                 .listRowSeparator(events.isEmpty ? .hidden : .visible, edges: .top)
+                .listRowInsets(Self.rowInsets)
         }
         .listStyle(.plain)
-        .contentMargins(.top, 8, for: .scrollContent)
+        .contentMargins(.top, 0, for: .scrollContent)
         // Just enough to scroll the last row clear of the bottom buttons.
         .contentMargins(.bottom, 80, for: .scrollContent)
     }
