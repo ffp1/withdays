@@ -23,37 +23,17 @@ enum AppInfo {
 
     /// Newest first. Add an entry here with each release.
     static let changelog: [Release] = [
-        Release(version: "1.0.7", date: "2026.10.25", notes: [
-            "リストのスワイプ操作を復活",
-            "ページ送りは余白・追加ボタン・日付の帯からのみ",
-            "ToDo新規作成時の不要なスクロールを修正",
-        ]),
-        Release(version: "1.0.6", date: "2026.10.25", notes: [
-            "行の上ではページ送りしないように",
-            "ToDo編集中に下のボタンを隠す",
-        ]),
-        Release(version: "1.0.5", date: "2026.10.25", notes: [
-            "リストのスワイプ操作（削除・編集など）を修正",
-            "日付を離れて移動してもリストがスクロール",
-        ]),
-        Release(version: "1.0.4", date: "2026.10.24", notes: [
+        Release(version: "1.2.1", date: "2026.10.25", notes: [
+            "日付・ToDoカテゴリを横スワイプで切り替え",
             "新しいアイコン",
-            "予定やToDoの行のスワイプがページ送りと衝突しないように",
         ]),
-        Release(version: "1.0.3", date: "2026.10.24", notes: [
-            "日付・ToDoカテゴリを横スワイプでページ送り",
-            "移動・複製時にカレンダーを拡大",
-            "動きと見た目の細かな調整",
-        ]),
-        Release(version: "1.0.2", date: "2026.10.24", notes: [
-            "ToDo（Appleのリマインダーと同期）",
-            "ToDoウィジェット",
+        Release(version: "1.2.0", date: "2026.10.24", notes: [
+            "ToDo（Appleのリマインダーと同期）とToDoウィジェット",
             "カレンダー上で予定を移動・複製",
             "削除の取り消し",
         ]),
-        Release(version: "1.0.1", date: "2026.10.24", notes: [
+        Release(version: "1.1.0", date: "2026.10.24", notes: [
             "今週の予定ウィジェット",
-            "表示の調整",
         ]),
         Release(version: "1.0.0", date: "2026.10.23", notes: [
             "はじめてのリリース",

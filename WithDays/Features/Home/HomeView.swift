@@ -215,8 +215,12 @@ struct HomeView: View {
             next: CalendarMath.addDays(1, to: listDay)
         ) { day in
             listDay = day
-            selectedDate = day
-            if !CalendarMath.isSameMonth(day, displayedMonth) { jump(to: day) }
+            // The pager swaps pages inside a no-animation transaction; select the day just after it,
+            // with animation, so the date band still rolls its numbers.
+            DispatchQueue.main.async {
+                withAnimation(.snappy) { selectedDate = day }
+                if !CalendarMath.isSameMonth(day, displayedMonth) { jump(to: day) }
+            }
         }
     }
 
