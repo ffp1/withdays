@@ -121,7 +121,12 @@ struct HomeView: View {
                 onEdit: { openEditor(.edit($0)) },
                 onDelete: delete,
                 onRelocate: startRelocation,
-                onAdd: { openEditor(.new) }
+                onAdd: { openEditor(.new) },
+                onSwipeDay: { delta in
+                    let day = CalendarMath.addDays(delta, to: selectedDate)
+                    selectedDate = day
+                    if !CalendarMath.isSameMonth(day, displayedMonth) { jump(to: day) }
+                }
             )
             .allowsHitTesting(relocation == nil)
             .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { listHeight = $0 }

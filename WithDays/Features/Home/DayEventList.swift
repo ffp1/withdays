@@ -8,6 +8,8 @@ struct DayEventList: View {
     var onDelete: (EKEvent) -> Void
     var onRelocate: (EKEvent, RelocationKind) -> Void
     var onAdd: () -> Void
+    /// -1 / +1 when the empty space below the list is swiped right / left.
+    var onSwipeDay: (Int) -> Void
 
     @Environment(CalendarStore.self) private var store
 
@@ -23,7 +25,9 @@ struct DayEventList: View {
             List {
                 ForEach(events, id: \.self) { event in
                     EventRow(event: event, dayStart: start, dayEnd: end)
-                        .listRowSeparator(.visible)
+                        .listRowSeparator(.visible, edges: .bottom)
+                        // No line above the first row.
+                        .listRowSeparator(event == events.first ? .hidden : .visible, edges: .top)
                         .contentShape(Rectangle())
                         .onTapGesture { onEdit(event) }
                         .swipeActions(edge: .trailing) {
@@ -60,6 +64,15 @@ struct DayEventList: View {
                 .buttonStyle(.plain)
                 // Hide only its own bottom line so the last event still gets a divider above this row.
                 .listRowSeparator(.hidden, edges: .bottom)
+                .listRowSeparator(events.isEmpty ? .hidden : .visible, edges: .top)
+
+                // Empty space: swipe left / right for the next / previous day.
+                Color.clear
+                    .frame(height: 240)
+                    .contentShape(Rectangle())
+                    .gesture(daySwipe)
+                    .listRowSeparator(.hidden)
+                    .listRowBackground(Color.clear)
             }
             .listStyle(.plain)
             .contentMargins(.bottom, 96, for: .scrollContent)
@@ -67,6 +80,15 @@ struct DayEventList: View {
             .transition(.opacity.combined(with: .offset(y: 6)))
         }
         .animation(.easeInOut(duration: 0.2), value: start)
+    }
+}
+
+extension DayEventList {
+    private var daySwipe: some Gesture {
+        DragGesture(minimumDistance: 30).onEnded { value in
+            guard abs(value.translation.width) > abs(value.translation.height) * 1.5, abs(value.translation.width) > 50 else { return }
+            onSwipeDay(value.translation.width < 0 ? 1 : -1)
+        }
     }
 }
 

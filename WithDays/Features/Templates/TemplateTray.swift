@@ -46,27 +46,46 @@ struct TemplateTray: View {
                 .fill(Color.secondary.opacity(0.5))
                 .frame(width: 36, height: 5)
                 .padding(.top, 6)
-            HStack(spacing: 8) {
-                circleButton("xmark", action: onClose)
-                Spacer()
+            // The title is centered on the tray itself, independent of the buttons on either side.
+            ZStack {
                 Text("テンプレート")
                     .font(.system(size: 16, weight: .bold))
-                Spacer()
-                circleButton(selecting ? "checkmark.circle.fill" : "checkmark.circle") {
-                    withAnimation(.snappy) {
-                        selecting.toggle()
-                        selection.removeAll()
+                HStack {
+                    circleButton("xmark", action: onClose)
+                    Spacer()
+                    // Select and ＋ (or delete while selecting) share one pill.
+                    HStack(spacing: 0) {
+                        pillButton(selecting ? "checkmark.circle.fill" : "checkmark.circle") {
+                            withAnimation(.snappy) {
+                                selecting.toggle()
+                                selection.removeAll()
+                            }
+                        }
+                        if selecting {
+                            pillButton("trash", tint: .red, action: deleteSelection)
+                                .disabled(selection.isEmpty)
+                        } else {
+                            pillButton("plus", action: onAdd)
+                        }
                     }
-                }
-                if selecting {
-                    circleButton("trash", tint: .red, action: deleteSelection)
-                        .disabled(selection.isEmpty)
-                } else {
-                    circleButton("plus", action: onAdd)
+                    .padding(.horizontal, 4)
+                    .glassEffect(.regular.interactive(), in: .capsule)
                 }
             }
             .padding(.horizontal, 14)
         }
+    }
+
+    private func pillButton(_ icon: String, tint: Color = .primary, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Image(systemName: icon)
+                .font(.system(size: 15, weight: .semibold))
+                .foregroundStyle(tint)
+                .frame(width: 38, height: 38)
+                .contentShape(Rectangle())
+                .contentTransition(.symbolEffect(.replace))
+        }
+        .buttonStyle(.plain)
     }
 
     private func circleButton(_ icon: String, tint: Color = .primary, action: @escaping () -> Void) -> some View {

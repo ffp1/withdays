@@ -67,6 +67,10 @@ private struct TodoContent: View {
     /// Subtask parent for a new item indented before it was saved.
     @State private var draftParent: String?
     @State private var showDone = false
+    /// Checked items wait 3 seconds before moving to 実行済み; checking again in that time cancels.
+    @State private var pendingDone: [String: Task<Void, Never>] = [:]
+    /// Direction of the last category change, for the slide.
+    @State private var forward = true
     @State private var categorySheet: CategorySheet?
     @State private var errorMessage: String?
     @FocusState private var focus: TodoField?
@@ -80,61 +84,46 @@ private struct TodoContent: View {
     }
 
     var body: some View {
+        let doneItems = todos.done[listID] ?? []
         VStack(spacing: 0) {
-            CategoryBar(onAdd: { categorySheet = .new }, onEdit: { categorySheet = .edit($0) })
-            List {
-                if showDone {
-                    sectionHeader("ToDo", count: todos.count(for: listID)) {
-                        withAnimation(.snappy) { showDone = false }
-                    }
-                } else {
-                    ForEach(todos.rows(for: listID)) { row in
-                        rowView(row)
-                    }
-                    if editingID == Self.newID {
-                        editor(depth: draftParent == nil ? 0 : 1)
-                            .listRowSeparator(.hidden)
-                            .listRowBackground(liftedBackground)
-                    }
-                }
-
-                let doneItems = todos.done[listID] ?? []
-                if !doneItems.isEmpty {
-                    sectionHeader("実行済み", count: doneItems.count, open: showDone) {
+            CategoryBar(
+                onSelect: selectList,
+                onAdd: { categorySheet = .new },
+                onEdit: { categorySheet = .edit($0) }
+            )
+            ZStack {
+                list(doneItems: doneItems)
+                    .id(listID)
+                    .transition(.push(from: forward ? .trailing : .leading))
+            }
+            .clipped()
+            .animation(.snappy(duration: 0.3), value: listID)
+        }
+        .overlay(alignment: .bottom) {
+            HStack(spacing: 12) {
+                // 実行済み stays at the bottom while the ToDo list is open.
+                if !showDone, !doneItems.isEmpty {
+                    sectionHeader("実行済み", count: doneItems.count, open: false) {
                         withAnimation(.snappy) {
                             commitEditing()
-                            showDone.toggle()
+                            showDone = true
                         }
                     }
-                    if showDone {
-                        ForEach(doneItems) { item in
-                            TodoRowLabel(item: item, depth: 0, childCount: 0, collapsed: false, color: listColor,
-                                         onToggle: { toggle(item) }, onFold: {})
-                                .swipeActions(edge: .trailing) { deleteButton(item.id) }
-                        }
-                    }
+                    .padding(.horizontal, 16)
+                    .frame(height: 56)
+                    .glassEffect(.regular, in: .capsule)
+                } else {
+                    Spacer()
                 }
-
-                // Empty space: adds an item, or just ends editing if one is open.
-                Color.clear
-                    .frame(height: 240)
-                    .contentShape(Rectangle())
-                    .onTapGesture(perform: tapEmptySpace)
-                    .listRowSeparator(.hidden)
-                    .listRowBackground(Color.clear)
+                Button(action: startNew) {
+                    Image(systemName: "plus")
+                        .font(.system(size: 26.4, weight: .semibold))
+                        .foregroundStyle(.white)
+                        .frame(width: 56, height: 56)
+                }
+                .buttonStyle(.glassProminent)
+                .buttonBorderShape(.circle)
             }
-            .listStyle(.plain)
-            .animation(.snappy, value: todos.rows(for: listID))
-        }
-        .overlay(alignment: .bottomTrailing) {
-            Button(action: startNew) {
-                Image(systemName: "plus")
-                    .font(.system(size: 26.4, weight: .semibold))
-                    .foregroundStyle(.white)
-                    .frame(width: 56, height: 56)
-            }
-            .buttonStyle(.glassProminent)
-            .buttonBorderShape(.circle)
             .padding(20)
         }
         .onChange(of: focus) { _, new in
@@ -147,73 +136,81 @@ private struct TodoContent: View {
         .sheet(item: $categorySheet) { sheet in
             CategoryEditorView(sheet: sheet)
         }
-        .sensoryFeedback(.success, trigger: todos.done[listID]?.count ?? 0) { old, new in new > old }
+        .sensoryFeedback(.success, trigger: doneItems.count) { old, new in new > old }
         .errorAlert($errorMessage)
     }
 
-    // MARK: Rows
+    private func list(doneItems: [TodoItem]) -> some View {
+        List {
+            if showDone {
+                sectionHeader("ToDo", count: todos.count(for: listID), open: false) {
+                    withAnimation(.snappy) { showDone = false }
+                }
+                .listRowSeparator(.hidden, edges: .top)
+                sectionHeader("実行済み", count: doneItems.count, open: true) {
+                    withAnimation(.snappy) { showDone = false }
+                }
+                ForEach(doneItems) { item in
+                    TodoItemRow(
+                        item: item, depth: 0, childCount: 0, collapsed: false, color: listColor,
+                        checked: true, isEditing: false,
+                        draftTitle: $draftTitle, draftNotes: $draftNotes, focus: $focus,
+                        onToggle: { toggle(item) }, onFold: {}, onTap: {}, onIndent: {}, onOutdent: {}
+                    )
+                    .swipeActions(edge: .trailing) { deleteButton(item.id) }
+                }
+            } else {
+                ForEach(todos.rows(for: listID)) { row in
+                    let editing = editingID == row.id
+                    TodoItemRow(
+                        item: row.item,
+                        depth: row.depth,
+                        childCount: row.childCount,
+                        collapsed: todos.meta.collapsed.contains(row.id),
+                        color: listColor,
+                        checked: pendingDone[row.id] != nil,
+                        isEditing: editing,
+                        draftTitle: $draftTitle,
+                        draftNotes: $draftNotes,
+                        focus: $focus,
+                        onToggle: { toggle(row.item) },
+                        onFold: { withAnimation(.snappy) { todos.toggleCollapsed(row.id) } },
+                        onTap: { startEditing(row.item) },
+                        onIndent: indentEditing,
+                        onOutdent: outdentEditing
+                    )
+                    .listRowSeparator(editing ? .hidden : .automatic)
+                    .swipeActions(edge: .trailing) {
+                        if !editing { deleteButton(row.id) }
+                    }
+                }
+                if editingID == Self.newID {
+                    TodoItemRow(
+                        item: TodoItem(id: Self.newID, title: "", notes: "", isCompleted: false, creationDate: .now),
+                        depth: draftParent == nil ? 0 : 1, childCount: 0, collapsed: false, color: listColor,
+                        checked: false, isEditing: true,
+                        draftTitle: $draftTitle, draftNotes: $draftNotes, focus: $focus,
+                        onToggle: {}, onFold: {}, onTap: {}, onIndent: indentEditing, onOutdent: outdentEditing
+                    )
+                    .listRowSeparator(.hidden)
+                    .transition(.opacity.combined(with: .move(edge: .top)))
+                }
+            }
 
-    @ViewBuilder
-    private func rowView(_ row: TodoRow) -> some View {
-        if editingID == row.id {
-            editor(depth: row.depth)
+            // Empty space: tap adds an item (or only ends editing); swipe changes the category.
+            Color.clear
+                .frame(height: 320)
+                .contentShape(Rectangle())
+                .onTapGesture(perform: tapEmptySpace)
+                .gesture(categorySwipe)
                 .listRowSeparator(.hidden)
-                .listRowBackground(liftedBackground)
-        } else {
-            TodoRowLabel(
-                item: row.item,
-                depth: row.depth,
-                childCount: row.childCount,
-                collapsed: todos.meta.collapsed.contains(row.id),
-                color: listColor,
-                onToggle: { toggle(row.item) },
-                onFold: { withAnimation(.snappy) { todos.toggleCollapsed(row.id) } }
-            )
-            .contentShape(Rectangle())
-            .onTapGesture { startEditing(row.item) }
-            .swipeActions(edge: .trailing) { deleteButton(row.id) }
+                .listRowBackground(Color.clear)
         }
+        .listStyle(.plain)
+        .animation(.snappy, value: todos.rows(for: listID))
     }
 
-    /// The row being edited floats slightly above the list.
-    private var liftedBackground: some View {
-        RoundedRectangle(cornerRadius: 14, style: .continuous)
-            .fill(Color(.systemBackground))
-            .shadow(color: .black.opacity(0.14), radius: 10, y: 4)
-            .padding(.horizontal, 6)
-            .padding(.vertical, 2)
-    }
-
-    private func editor(depth: Int) -> some View {
-        HStack(alignment: .top, spacing: 10) {
-            Image(systemName: "circle")
-                .font(.system(size: 20))
-                .foregroundStyle(.tertiary)
-            VStack(alignment: .leading, spacing: 4) {
-                TextField("タイトル", text: $draftTitle)
-                    .font(.system(size: 16, weight: .bold))
-                    .focused($focus, equals: .title)
-                    .submitLabel(.next)
-                    .onSubmit { focus = .notes }
-                TextField("メモ", text: $draftNotes, axis: .vertical)
-                    .font(.system(size: 13))
-                    .foregroundStyle(.secondary)
-                    .focused($focus, equals: .notes)
-            }
-        }
-        .padding(.leading, CGFloat(depth) * 28)
-        .padding(.vertical, 6)
-        .animation(.snappy, value: depth)
-        // Swipe right while editing to make it a subtask of the item above; left to undo that.
-        .gesture(
-            DragGesture(minimumDistance: 24).onEnded { value in
-                guard abs(value.translation.width) > abs(value.translation.height) * 1.5 else { return }
-                if value.translation.width > 50 { indentEditing() } else if value.translation.width < -50 { outdentEditing() }
-            }
-        )
-    }
-
-    private func sectionHeader(_ title: String, count: Int, open: Bool = false, action: @escaping () -> Void) -> some View {
+    private func sectionHeader(_ title: String, count: Int, open: Bool, action: @escaping () -> Void) -> some View {
         Button(action: action) {
             HStack(spacing: 8) {
                 Text(title)
@@ -244,24 +241,45 @@ private struct TodoContent: View {
         .tint(.red)
     }
 
+    private var categorySwipe: some Gesture {
+        DragGesture(minimumDistance: 30).onEnded { value in
+            guard abs(value.translation.width) > abs(value.translation.height) * 1.5, abs(value.translation.width) > 50 else { return }
+            let lists = todos.visibleLists
+            guard let index = lists.firstIndex(where: { $0.calendarIdentifier == listID }) else { return }
+            let next = index + (value.translation.width < 0 ? 1 : -1)
+            guard lists.indices.contains(next) else { return }
+            selectList(lists[next])
+        }
+    }
+
+    private func selectList(_ list: EKCalendar) {
+        let lists = todos.visibleLists
+        let from = lists.firstIndex { $0.calendarIdentifier == listID } ?? 0
+        let to = lists.firstIndex { $0.calendarIdentifier == list.calendarIdentifier } ?? 0
+        forward = to >= from
+        withAnimation(.snappy(duration: 0.3)) { todos.selectedListID = list.calendarIdentifier }
+    }
+
     // MARK: Editing
 
     private func startEditing(_ item: TodoItem) {
         commitEditing()
-        editingID = item.id
         draftTitle = item.title
         draftNotes = item.notes
         draftParent = nil
+        withAnimation(.snappy(duration: 0.3)) { editingID = item.id }
         focus = .title
     }
 
     private func startNew() {
         commitEditing()
-        withAnimation(.snappy) { showDone = false }
-        editingID = Self.newID
         draftTitle = ""
         draftNotes = ""
         draftParent = nil
+        withAnimation(.snappy(duration: 0.3)) {
+            showDone = false
+            editingID = Self.newID
+        }
         focus = .title
     }
 
@@ -277,7 +295,7 @@ private struct TodoContent: View {
     /// Saves the open row: a new item only if it has a title; an existing one only if it changed.
     private func commitEditing() {
         guard let id = editingID else { return }
-        editingID = nil
+        withAnimation(.snappy(duration: 0.3)) { editingID = nil }
         let title = draftTitle.trimmingCharacters(in: .whitespacesAndNewlines)
         let notes = draftNotes.trimmingCharacters(in: .whitespacesAndNewlines)
         if id == Self.newID {
@@ -297,7 +315,7 @@ private struct TodoContent: View {
         guard let id = editingID else { return }
         if id == Self.newID {
             // The new item will become a subtask of the last top-level item.
-            draftParent = todos.rows(for: listID).last { $0.depth == 0 }?.id
+            withAnimation(.snappy) { draftParent = todos.rows(for: listID).last { $0.depth == 0 }?.id }
         } else {
             withAnimation(.snappy) { todos.indent(id, in: listID) }
         }
@@ -306,14 +324,28 @@ private struct TodoContent: View {
     private func outdentEditing() {
         guard let id = editingID else { return }
         if id == Self.newID {
-            draftParent = nil
+            withAnimation(.snappy) { draftParent = nil }
         } else {
             withAnimation(.snappy) { todos.outdent(id, in: listID) }
         }
     }
 
+    /// Done items go back immediately; open items move to 実行済み 3 seconds after being checked.
     private func toggle(_ item: TodoItem) {
-        run { try todos.setCompleted(item.id, !item.isCompleted) }
+        if item.isCompleted {
+            run { try todos.setCompleted(item.id, false) }
+            return
+        }
+        if let task = pendingDone.removeValue(forKey: item.id) {
+            task.cancel()
+            return
+        }
+        pendingDone[item.id] = Task { @MainActor in
+            try? await Task.sleep(for: .seconds(3))
+            guard !Task.isCancelled else { return }
+            pendingDone[item.id] = nil
+            withAnimation(.snappy) { run { try todos.setCompleted(item.id, true) } }
+        }
     }
 
     private func run(_ work: () throws -> Void) {
@@ -321,41 +353,65 @@ private struct TodoContent: View {
     }
 }
 
-/// A list row: check button, title and notes, and for parents the subtask count with a fold chevron.
-private struct TodoRowLabel: View {
+/// One row that turns into its own editor in place: the title becomes editable where it sits,
+/// the notes field opens under it and the row lifts with a shadow.
+private struct TodoItemRow: View {
     let item: TodoItem
     let depth: Int
     let childCount: Int
     let collapsed: Bool
     let color: Color
+    /// Completed, or checked and waiting to move.
+    let checked: Bool
+    let isEditing: Bool
+    @Binding var draftTitle: String
+    @Binding var draftNotes: String
+    var focus: FocusState<TodoField?>.Binding
     var onToggle: () -> Void
     var onFold: () -> Void
+    var onTap: () -> Void
+    var onIndent: () -> Void
+    var onOutdent: () -> Void
 
     var body: some View {
         HStack(alignment: .top, spacing: 10) {
             Button(action: onToggle) {
-                Image(systemName: item.isCompleted ? "checkmark.circle.fill" : "circle")
+                Image(systemName: checked ? "checkmark.circle.fill" : "circle")
                     .font(.system(size: 20))
-                    .foregroundStyle(item.isCompleted ? color : Color.secondary)
+                    .foregroundStyle(checked ? color : Color.secondary)
                     .contentTransition(.symbolEffect(.replace))
             }
             .buttonStyle(.plain)
+            .disabled(isEditing)
 
             VStack(alignment: .leading, spacing: 2) {
-                Text(item.title)
-                    .font(.system(size: 16, weight: .semibold))
-                    .foregroundStyle(item.isCompleted ? .secondary : .primary)
-                    .strikethrough(item.isCompleted)
-                if !item.notes.isEmpty {
-                    Text(item.notes)
+                if isEditing {
+                    TextField("タイトル", text: $draftTitle)
+                        .font(.system(size: 16, weight: .semibold))
+                        .focused(focus, equals: .title)
+                        .submitLabel(.next)
+                        .onSubmit { focus.wrappedValue = .notes }
+                    TextField("メモ", text: $draftNotes, axis: .vertical)
                         .font(.system(size: 13))
                         .foregroundStyle(.secondary)
-                        .lineLimit(2)
+                        .focused(focus, equals: .notes)
+                        .transition(.opacity.combined(with: .move(edge: .top)))
+                } else {
+                    Text(item.title)
+                        .font(.system(size: 16, weight: .semibold))
+                        .foregroundStyle(checked ? .secondary : .primary)
+                        .strikethrough(item.isCompleted)
+                    if !item.notes.isEmpty {
+                        Text(item.notes)
+                            .font(.system(size: 13))
+                            .foregroundStyle(.secondary)
+                            .lineLimit(2)
+                    }
                 }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
 
-            if childCount > 0 {
+            if childCount > 0, !isEditing {
                 Button(action: onFold) {
                     HStack(spacing: 4) {
                         Text("\(childCount)")
@@ -373,12 +429,31 @@ private struct TodoRowLabel: View {
             }
         }
         .padding(.leading, CGFloat(depth) * 28)
-        .padding(.vertical, 4)
+        .padding(.vertical, isEditing ? 8 : 4)
+        .background {
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .fill(Color(.systemBackground))
+                .shadow(color: .black.opacity(isEditing ? 0.14 : 0), radius: isEditing ? 10 : 0, y: isEditing ? 4 : 0)
+                .padding(.horizontal, -10)
+                .opacity(isEditing ? 1 : 0)
+        }
+        .scaleEffect(isEditing ? 1.01 : 1)
+        .contentShape(Rectangle())
+        .onTapGesture { if !isEditing { onTap() } }
+        // Swipe right while editing to make it a subtask of the item above; left to undo that.
+        .gesture(
+            DragGesture(minimumDistance: 24).onEnded { value in
+                guard abs(value.translation.width) > abs(value.translation.height) * 1.5 else { return }
+                if value.translation.width > 50 { onIndent() } else if value.translation.width < -50 { onOutdent() }
+            },
+            including: isEditing ? .all : .subviews
+        )
     }
 }
 
 /// Categories side by side with their open counts; ＋ at the end adds one, tapping the current one edits it.
 private struct CategoryBar: View {
+    var onSelect: (EKCalendar) -> Void
     var onAdd: () -> Void
     var onEdit: (EKCalendar) -> Void
 
@@ -394,7 +469,7 @@ private struct CategoryBar: View {
                         if selected {
                             onEdit(list)
                         } else {
-                            withAnimation(.snappy) { todos.selectedListID = list.calendarIdentifier }
+                            onSelect(list)
                         }
                     } label: {
                         HStack(spacing: 5) {
