@@ -282,12 +282,13 @@ final class CalendarStore {
         reload()
     }
 
-    func delete(_ event: EKEvent, span: EKSpan = .thisEvent) throws {
+    /// `recordUndo: false` for deletes that are themselves an undo (removing duplicates), so no toast follows.
+    func delete(_ event: EKEvent, span: EKSpan = .thisEvent, recordUndo: Bool = true) throws {
         var draft = EventDraft(event: event)
         // One occurrence comes back as a standalone event; "future events" comes back as a series from that day.
         if span == .thisEvent { draft.recurrence = Recurrence() }
         try eventStore.remove(event, span: span, commit: true)
-        lastDeleted = DeletedEvent(draft: draft)
+        if recordUndo { lastDeleted = DeletedEvent(draft: draft) }
         reload()
     }
 
@@ -313,16 +314,20 @@ final class CalendarStore {
         reload()
     }
 
-    /// One-off copies on each of `days`, keeping the time of day and length.
-    func duplicate(_ event: EKEvent, to days: [Date]) throws {
+    /// One-off copies on each of `days`, keeping the time of day and length. Returns them for undo.
+    @discardableResult
+    func duplicate(_ event: EKEvent, to days: [Date]) throws -> [EKEvent] {
         var draft = EventDraft(event: event)
         draft.recurrence = Recurrence()
+        var copies: [EKEvent] = []
         for day in days {
             let copy = EKEvent(eventStore: eventStore)
             draft.placed(on: day).apply(to: copy, calendar: event.calendar)
             try eventStore.save(copy, span: .thisEvent, commit: false)
+            copies.append(copy)
         }
         try eventStore.commit()
         reload()
+        return copies
     }
 }

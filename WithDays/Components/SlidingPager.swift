@@ -17,6 +17,8 @@ final class PagerModel<ID: Hashable> {
     var width: CGFloat = 0
     /// A page jumped to directly (not a neighbour) takes the slot on its side while it slides in.
     var incoming: PagerSlot<ID>?
+    /// The page a running slide is heading to.
+    private(set) var target: ID?
 
     func slots(current: ID, previous: ID?, next: ID?) -> [PagerSlot<ID>] {
         if let incoming { return [PagerSlot(id: current, slot: 0), incoming] }
@@ -34,7 +36,15 @@ final class PagerModel<ID: Hashable> {
     }
 
     /// Past a quarter width, or with a flick, it settles on the neighbour; otherwise it settles back.
-    func end(_ value: DragGesture.Value, previous: ID?, next: ID?, commit: @escaping (ID) -> Void) {
+    /// `onStart` runs as the slide begins (to update selection right away, like a scroll view's page change);
+    /// `commit` runs once the pages have settled.
+    func end(
+        _ value: DragGesture.Value,
+        previous: ID?,
+        next: ID?,
+        onStart: (ID) -> Void = { _ in },
+        commit: @escaping (ID) -> Void
+    ) {
         guard incoming == nil else { return }
         let page = max(width, 1)
         let moved = value.translation.width, flicked = value.predictedEndTranslation.width
@@ -43,6 +53,8 @@ final class PagerModel<ID: Hashable> {
             withAnimation(.spring(response: 0.3, dampingFraction: 0.86)) { offset = 0 }
             return
         }
+        self.target = target
+        onStart(target)
         finish(target, side: side, animation: .spring(response: 0.32, dampingFraction: 0.9), commit: commit)
     }
 
@@ -57,6 +69,7 @@ final class PagerModel<ID: Hashable> {
     }
 
     private func finish(_ id: ID, side: Int, animation: Animation, commit: @escaping (ID) -> Void) {
+        target = id
         withAnimation(animation) {
             offset = -CGFloat(side) * width
         } completion: {
@@ -67,6 +80,7 @@ final class PagerModel<ID: Hashable> {
                 commit(id)
                 self.incoming = nil
                 self.offset = 0
+                self.target = nil
             }
         }
     }

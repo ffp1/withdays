@@ -110,7 +110,8 @@ struct TodoWidgetView: View {
 
     @Environment(\.widgetFamily) private var family
 
-    private var maxRows: Int { family == .systemLarge ? 11 : 4 }
+    // Fewer, airier rows.
+    private var maxRows: Int { family == .systemLarge ? 9 : 3 }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
@@ -143,7 +144,7 @@ struct TodoWidgetView: View {
                         }
                         .buttonStyle(.plain)
                         Text(row.item.title)
-                            .font(.system(size: 14, weight: .semibold))
+                            .font(.system(size: 14))
                             .lineLimit(1)
                         Spacer(minLength: 0)
                         if row.childCount > 0 {
@@ -153,6 +154,7 @@ struct TodoWidgetView: View {
                         }
                     }
                     .padding(.leading, CGFloat(row.depth) * 22)
+                    .padding(.vertical, 4)
                 }
                 Spacer(minLength: 0)
             }

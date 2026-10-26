@@ -249,9 +249,34 @@ final class TodoStore {
         reload()
     }
 
+    /// What a delete removed: enough to add it (and its subtasks) back.
+    struct DeletedTodo {
+        struct Child {
+            let title: String
+            let notes: String
+        }
+
+        let listID: String
+        let title: String
+        let notes: String
+        let isCompleted: Bool
+        let children: [Child]
+    }
+
     /// Deletes the item and its subtasks.
-    func delete(_ id: String) throws {
-        let ids = [id] + meta.parents.filter { $0.value == id }.map(\.key)
+    @discardableResult
+    func delete(_ id: String) throws -> DeletedTodo? {
+        let childIDs = meta.parents.filter { $0.value == id }.map(\.key)
+        let ids = [id] + childIDs
+        let snapshot = reminders[id].map { reminder in
+            DeletedTodo(
+                listID: reminder.calendar.calendarIdentifier,
+                title: reminder.title ?? "",
+                notes: reminder.notes ?? "",
+                isCompleted: reminder.isCompleted,
+                children: childIDs.compactMap { reminders[$0] }.map { DeletedTodo.Child(title: $0.title ?? "", notes: $0.notes ?? "") }
+            )
+        }
         for itemID in ids {
             if let reminder = reminders[itemID] { try eventStore.remove(reminder, commit: false) }
             meta.parents[itemID] = nil
@@ -259,6 +284,16 @@ final class TodoStore {
         try eventStore.commit()
         saveMeta()
         reload()
+        return snapshot
+    }
+
+    /// Undo for `delete`: the item comes back at the end of its list, with its subtasks under it.
+    func restore(_ deleted: DeletedTodo) throws {
+        let id = try add(title: deleted.title, notes: deleted.notes, to: deleted.listID)
+        for child in deleted.children {
+            try add(title: child.title, notes: child.notes, to: deleted.listID, parent: id)
+        }
+        if deleted.isCompleted { try setCompleted(id, true) }
     }
 
     /// Makes the item a subtask of the top-level row directly above it.

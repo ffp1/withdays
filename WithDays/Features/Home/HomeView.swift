@@ -12,6 +12,7 @@ enum HomeMode: String {
 struct HomeView: View {
     @Environment(CalendarStore.self) private var store
     @Environment(TemplateStore.self) private var templates
+    @Environment(ToastCenter.self) private var toasts
     /// Plain state (saved on change) so switching can animate; @AppStorage updates don't carry the animation.
     @State private var mode = UserDefaults.standard.string(forKey: SettingsKey.homeMode) ?? HomeMode.calendar.rawValue
 
@@ -36,7 +37,6 @@ struct HomeView: View {
     @State private var trayDragging = false
     @State private var listHeight: CGFloat = 300
     @State private var relocation: Relocation?
-    @State private var toast: CalendarStore.DeletedEvent?
     @State private var spanRequest: SpanRequest?
     @State private var errorMessage: String?
     @State private var todayPulse = 0
@@ -120,7 +120,8 @@ struct HomeView: View {
             // Picked on the calendar (not swiped): slide the list there with a quick, sharp ease-out,
             // one page wide however far the day is.
             let day = CalendarMath.startOfDay(new)
-            guard !CalendarMath.isSameDay(day, listDay) else { return }
+            // A swipe already sliding there selected it itself.
+            guard !CalendarMath.isSameDay(day, listDay), dayPager.target != day else { return }
             dayPager.slide(to: day, side: day > listDay ? 1 : -1, animation: .timingCurve(0.16, 1, 0.3, 1, duration: 0.3)) {
                 listDay = $0
             }
@@ -212,16 +213,14 @@ struct HomeView: View {
         dayPager.end(
             value,
             previous: CalendarMath.addDays(-1, to: listDay),
-            next: CalendarMath.addDays(1, to: listDay)
-        ) { day in
-            listDay = day
-            // The pager swaps pages inside a no-animation transaction; select the day just after it,
-            // with animation, so the date band still rolls its numbers.
-            DispatchQueue.main.async {
+            next: CalendarMath.addDays(1, to: listDay),
+            onStart: { day in
+                // Select as the slide starts, like the month pager does, so the band rolls with it.
                 withAnimation(.snappy) { selectedDate = day }
                 if !CalendarMath.isSameMonth(day, displayedMonth) { jump(to: day) }
-            }
-        }
+            },
+            commit: { listDay = $0 }
+        )
     }
 
     @ToolbarContentBuilder
@@ -395,30 +394,14 @@ struct HomeView: View {
         }
     }
 
-    /// While the toast shows, nothing else reacts to touches.
+    /// The undo toast sits between the bottom buttons (above the bar in ToDo) and leaves the screen usable.
     @ViewBuilder
     private var toastLayer: some View {
-        if toast != nil {
-            ZStack(alignment: .bottom) {
-                Color.black.opacity(0.001)
-                    .ignoresSafeArea()
-                HStack(spacing: 12) {
-                    Text("予定を削除しました")
-                        .font(.system(size: 14, weight: .semibold))
-                    Button("元に戻す", action: undoDelete)
-                        .font(.system(size: 14, weight: .bold))
-                        .underline()
-                        .foregroundStyle(Color.brand)
-                }
-                .lineLimit(1)
-                .minimumScaleFactor(0.8)
-                .padding(.horizontal, 16)
-                .frame(height: 56)
-                .glassEffect(.regular, in: .capsule)
-                .padding(.horizontal, 20 + 56 + 10)
-                .padding(.bottom, 20)
-                .transition(.offset(y: 140).combined(with: .opacity))
-            }
+        if let toast = toasts.current {
+            UndoToastView(toast: toast) { toasts.performUndo() }
+                .padding(.horizontal, isTodo ? 20 : 20 + 56 + 10)
+                .padding(.bottom, isTodo ? 20 + 56 + 12 : 20)
+                .id(toast.id)
         }
     }
 
@@ -520,18 +503,13 @@ struct HomeView: View {
 
     private func showToast() {
         guard let deleted = store.lastDeleted else { return }
-        withAnimation(.spring(response: 0.38, dampingFraction: 0.68)) { toast = deleted }
+        toasts.show("予定を削除しました") {
+            do { try store.undoDelete() } catch { errorMessage = error.localizedDescription }
+        }
         Task { @MainActor in
             try? await Task.sleep(for: .seconds(3))
-            guard toast?.id == deleted.id else { return }
-            withAnimation(.snappy) { toast = nil }
             store.clearLastDeleted(deleted.id)
         }
-    }
-
-    private func undoDelete() {
-        do { try store.undoDelete() } catch { errorMessage = error.localizedDescription }
-        withAnimation(.snappy) { toast = nil }
     }
 
     private func dropTemplate(_ id: UUID, on day: Date) {
@@ -582,11 +560,30 @@ struct HomeView: View {
         let event = current.event
         switch current.kind {
         case .duplicate:
-            do { try store.duplicate(event, to: current.targets.sorted()) } catch { errorMessage = error.localizedDescription }
+            do {
+                let copies = try store.duplicate(event, to: current.targets.sorted())
+                toasts.show("予定を複製しました") {
+                    do {
+                        for copy in copies { try store.delete(copy, recordUndo: false) }
+                    } catch {
+                        errorMessage = error.localizedDescription
+                    }
+                }
+            } catch {
+                errorMessage = error.localizedDescription
+            }
         case .move:
             guard let day = current.targets.first else { return }
+            let originalDay = CalendarMath.startOfDay(event.startDate)
             let run: (EKSpan) -> Void = { span in
-                do { try store.move(event, to: day, span: span) } catch { errorMessage = error.localizedDescription }
+                do {
+                    try store.move(event, to: day, span: span)
+                    toasts.show("予定を移動しました") {
+                        do { try store.move(event, to: originalDay, span: span) } catch { errorMessage = error.localizedDescription }
+                    }
+                } catch {
+                    errorMessage = error.localizedDescription
+                }
             }
             if event.hasRecurrenceRules {
                 spanRequest = SpanRequest(message: "くりかえしの予定を移動", perform: run)

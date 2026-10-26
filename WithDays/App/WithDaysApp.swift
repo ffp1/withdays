@@ -5,6 +5,7 @@ struct WithDaysApp: App {
     @State private var store = CalendarStore()
     @State private var templates = TemplateStore()
     @State private var todos = TodoStore()
+    @State private var toasts = ToastCenter()
     @AppStorage(SettingsKey.theme, store: AppGroup.defaults) private var theme = AppTheme.system.rawValue
 
     var body: some Scene {
@@ -13,6 +14,7 @@ struct WithDaysApp: App {
                 .environment(store)
                 .environment(templates)
                 .environment(todos)
+                .environment(toasts)
                 .tint(.brand)
                 .preferredColorScheme((AppTheme(rawValue: theme) ?? .system).colorScheme)
         }

@@ -93,6 +93,8 @@ private struct EventRow: View {
     let dayStart: Date
     let dayEnd: Date
 
+    @AppStorage(SettingsKey.dimPastEvents) private var dimPast = false
+
     var body: some View {
         HStack(alignment: .center, spacing: 10) {
             timeColumn
@@ -129,6 +131,7 @@ private struct EventRow: View {
         }
         .fixedSize(horizontal: false, vertical: true)
         .padding(.vertical, 2)
+        .opacity(dimPast && event.endDate < .now ? 0.4 : 1)
     }
 
     @ViewBuilder

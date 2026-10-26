@@ -118,6 +118,7 @@ private struct WeekRow: View {
 
     @Environment(\.gridRowHeight) private var rowHeight
     @State private var dropColumn: Int?
+    @AppStorage(SettingsKey.dimPastEvents) private var dimPast = false
 
     var body: some View {
         GeometryReader { geo in
@@ -174,7 +175,8 @@ private struct WeekRow: View {
         // While moving / duplicating, only the chosen event (and its previews) stay solid.
         if let relocation { return relocation.event == item.event ? 1 : 0.25 }
         let inMonth = CalendarMath.isSameMonth(week[item.startCol], month) || CalendarMath.isSameMonth(week[item.endCol], month)
-        return inMonth ? 1 : 0.45
+        let past = dimPast && item.event.endDate < .now
+        return (inMonth ? 1 : 0.45) * (past ? 0.4 : 1)
     }
 }
 
@@ -200,6 +202,7 @@ private struct DayCell: View {
 
     @Environment(\.todayPulse) private var todayPulse
     @State private var pressing = false
+    @State private var indicatorVisible = true
 
     var body: some View {
         ZStack(alignment: .topLeading) {
@@ -212,6 +215,7 @@ private struct DayCell: View {
             // Long-press progress: the day's outline draws itself while held.
             RoundedRectangle(cornerRadius: GridMetrics.cornerRadius, style: .continuous)
                 .trim(from: 0, to: pressing ? 1 : 0)
+                .opacity(indicatorVisible ? 1 : 0)
                 .stroke(Color.brand, style: StrokeStyle(lineWidth: 2, lineCap: .round))
                 .padding(1)
 
@@ -266,15 +270,30 @@ private struct DayCell: View {
         .onLongPressGesture(minimumDuration: GridMetrics.longPress) {
             if !relocating { actions.onDayLongPress(day) }
         } onPressingChanged: { isPressing in
-            pressProgress(isPressing && !relocating, $pressing)
+            pressProgress(isPressing && !relocating, $pressing, $indicatorVisible)
         }
     }
 }
 
-/// Starts the progress a moment after touch-down (so plain taps don't flash it) and resets instantly on release.
-private func pressProgress(_ isPressing: Bool, _ value: Binding<Bool>) {
+/// Starts the progress a moment after touch-down (so plain taps don't flash it); on release it fades out,
+/// then resets out of sight.
+private func pressProgress(_ isPressing: Bool, _ progress: Binding<Bool>, _ visible: Binding<Bool>) {
+    var instant = Transaction()
+    instant.disablesAnimations = true
     if isPressing {
-        withAnimation(.linear(duration: GridMetrics.longPress - 0.1).delay(0.1)) { value.wrappedValue = true }
+        withTransaction(instant) { visible.wrappedValue = true }
+        withAnimation(.linear(duration: GridMetrics.longPress - 0.1).delay(0.1)) { progress.wrappedValue = true }
+    } else {
+        withAnimation(.easeOut(duration: 0.25)) { visible.wrappedValue = false }
+        Task { @MainActor in
+            try? await Task.sleep(for: .milliseconds(260))
+            withTransaction(instant) {
+                progress.wrappedValue = false
+                visible.wrappedValue = true
+            }
+        }
+    }
+}
     } else {
         var transaction = Transaction()
         transaction.disablesAnimations = true
@@ -292,6 +311,7 @@ private struct PressableChip: View {
     var onLongPress: () -> Void
 
     @State private var pressing = false
+    @State private var indicatorVisible = true
 
     var body: some View {
         EventChip(
@@ -304,6 +324,7 @@ private struct PressableChip: View {
             Capsule()
                 .fill(Color.brand)
                 .frame(width: pressing ? width : 0, height: 2)
+                .opacity(indicatorVisible ? 1 : 0)
                 .offset(y: 2)
         }
         .contentShape(Rectangle())
@@ -312,7 +333,7 @@ private struct PressableChip: View {
         .onLongPressGesture(minimumDuration: GridMetrics.longPress) {
             onLongPress()
         } onPressingChanged: { isPressing in
-            pressProgress(isPressing, $pressing)
+            pressProgress(isPressing, $pressing, $indicatorVisible)
         }
         .allowsHitTesting(interactive)
     }

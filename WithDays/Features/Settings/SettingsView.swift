@@ -7,6 +7,7 @@ struct SettingsView: View {
     @Environment(TodoStore.self) private var todos
     @AppStorage(SettingsKey.theme, store: AppGroup.defaults) private var theme = AppTheme.system.rawValue
     @AppStorage(SettingsKey.weekStart, store: AppGroup.defaults) private var weekStart = 1
+    @AppStorage(SettingsKey.dimPastEvents) private var dimPast = false
 
     var body: some View {
         List {
@@ -18,6 +19,7 @@ struct SettingsView: View {
                     Text("日曜日").tag(1)
                     Text("月曜日").tag(2)
                 }
+                Toggle("過去の予定を薄く表示", isOn: $dimPast)
             }
 
             Section("カレンダー") {

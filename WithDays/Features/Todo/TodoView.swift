@@ -59,6 +59,7 @@ private enum TodoField: Hashable {
 
 private struct TodoContent: View {
     @Environment(TodoStore.self) private var todos
+    @Environment(ToastCenter.self) private var toasts
 
     /// The row being edited: an item ID, or `newID` for an item not saved yet.
     @State private var editingID: String?
@@ -73,6 +74,10 @@ private struct TodoContent: View {
     @State private var pager = PagerModel<String>()
     @State private var fillerHeight: CGFloat = 0
     @State private var deletePulse = 0
+    /// Deleted rows leave the list at once, before the store finishes.
+    @State private var hiddenIDs: Set<String> = []
+    /// Where the row being edited is, so a tap anywhere else only ends editing.
+    @State private var editingFrame: CGRect = .zero
     @State private var completedPulse = 0
     @State private var categorySheet: CategorySheet?
     @State private var errorMessage: String?
@@ -147,6 +152,21 @@ private struct TodoContent: View {
             .allowsHitTesting(editingID == nil)
             .animation(.snappy(duration: 0.2), value: editingID == nil)
         }
+        .overlay {
+            // While editing, a tap anywhere outside the row only ends editing; whatever was under it
+            // doesn't react. The row itself stays reachable through a hole in the catcher.
+            if editingID != nil {
+                GeometryReader { geo in
+                    let origin = geo.frame(in: .global).origin
+                    Color.black.opacity(0.001)
+                        .contentShape(HoleShape(hole: editingFrame.offsetBy(dx: -origin.x, dy: -origin.y)), eoFill: true)
+                        .onTapGesture {
+                            focus = nil
+                            commitEditing()
+                        }
+                }
+            }
+        }
         .onChange(of: focus) { _, new in
             if new == nil { commitEditing() }
         }
@@ -174,7 +194,7 @@ private struct TodoContent: View {
                     withAnimation(.snappy(duration: 0.35)) { showDone = false }
                 }
                 .listRowSeparator(.hidden, edges: .top)
-                ForEach(todos.done[id] ?? []) { item in
+                ForEach((todos.done[id] ?? []).filter { !hiddenIDs.contains($0.id) }) { item in
                     TodoItemRow(
                         item: item, depth: 0, childCount: 0, collapsed: false, color: color,
                         checked: true, isEditing: false,
@@ -185,7 +205,7 @@ private struct TodoContent: View {
                     .transition(.move(edge: .bottom).combined(with: .opacity))
                 }
             } else {
-                ForEach(todos.rows(for: id)) { row in
+                ForEach(todos.rows(for: id).filter { !isHidden($0.id) }) { row in
                     let editing = isCurrent && editingID == row.id
                     TodoItemRow(
                         item: row.item,
@@ -202,7 +222,8 @@ private struct TodoContent: View {
                         onFold: { withAnimation(.snappy) { todos.toggleCollapsed(row.id) } },
                         onTap: { startEditing(row.item) },
                         onIndent: indentEditing,
-                        onOutdent: outdentEditing
+                        onOutdent: outdentEditing,
+                        onEditingFrame: { editingFrame = $0 }
                     )
                     .listRowSeparator(editing ? .hidden : .automatic)
                     .swipeActions(edge: .trailing) {
@@ -216,7 +237,8 @@ private struct TodoContent: View {
                         depth: draftParent == nil ? 0 : 1, childCount: 0, collapsed: false, color: color,
                         checked: false, isEditing: true,
                         draftTitle: $draftTitle, draftNotes: $draftNotes, focus: $focus,
-                        onToggle: {}, onFold: {}, onTap: {}, onIndent: indentEditing, onOutdent: outdentEditing
+                        onToggle: {}, onFold: {}, onTap: {}, onIndent: indentEditing, onOutdent: outdentEditing,
+                        onEditingFrame: { editingFrame = $0 }
                     )
                     .listRowSeparator(.hidden)
                     .transition(.opacity.combined(with: .move(edge: .top)))
@@ -268,11 +290,21 @@ private struct TodoContent: View {
     private func deleteButton(_ id: String) -> some View {
         Button(role: .destructive) {
             deletePulse += 1
-            run { try todos.delete(id) }
+            withAnimation(.snappy(duration: 0.25)) { _ = hiddenIDs.insert(id) }
+            run {
+                if let deleted = try todos.delete(id) {
+                    toasts.show("ToDoを削除しました") { run { try todos.restore(deleted) } }
+                }
+            }
         } label: {
             Image(systemName: "trash")
         }
         .tint(.red)
+    }
+
+    /// A deleted row, or a subtask of one, waiting for the store to drop it.
+    private func isHidden(_ id: String) -> Bool {
+        hiddenIDs.contains(id) || todos.meta.parents[id].map(hiddenIDs.contains) == true
     }
 
     /// The category before (-1) or after (1) the current one.
@@ -406,6 +438,7 @@ private struct TodoItemRow: View {
     var onTap: () -> Void
     var onIndent: () -> Void
     var onOutdent: () -> Void
+    var onEditingFrame: (CGRect) -> Void = { _ in }
 
     private var hasNotes: Bool {
         isEditing || !item.notes.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
@@ -425,23 +458,23 @@ private struct TodoItemRow: View {
             VStack(alignment: .leading, spacing: 2) {
                 if isEditing {
                     TextField("タイトル", text: $draftTitle)
-                        .font(.system(size: 16, weight: .semibold))
+                        .font(.system(size: 16 * 1.05))
                         .focused(focus, equals: .title)
                         .submitLabel(.next)
                         .onSubmit { focus.wrappedValue = .notes }
                     TextField("メモ", text: $draftNotes, axis: .vertical)
-                        .font(.system(size: 13))
+                        .font(.system(size: 13 * 1.05))
                         .foregroundStyle(.secondary)
                         .focused(focus, equals: .notes)
                         .transition(.opacity.combined(with: .move(edge: .top)))
                 } else {
                     Text(item.title)
-                        .font(.system(size: 16, weight: .semibold))
+                        .font(.system(size: 16 * 1.05))
                         .foregroundStyle(checked ? .secondary : .primary)
                         .strikethrough(item.isCompleted)
                     if hasNotes {
                         Text(item.notes.trimmingCharacters(in: .whitespacesAndNewlines))
-                            .font(.system(size: 13))
+                            .font(.system(size: 13 * 1.05))
                             .foregroundStyle(.secondary)
                             .lineLimit(2)
                     }
@@ -468,6 +501,9 @@ private struct TodoItemRow: View {
         }
         .padding(.leading, CGFloat(depth) * 28)
         .padding(.vertical, isEditing ? 8 : 4)
+        .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { frame in
+            if isEditing { onEditingFrame(frame) }
+        }
         .background {
             RoundedRectangle(cornerRadius: 14, style: .continuous)
                 .fill(Color(.systemBackground))
@@ -547,5 +583,16 @@ struct CountBadge: View {
             .padding(.horizontal, 5)
             .frame(minWidth: 18, minHeight: 18)
             .background(Capsule().fill(color))
+    }
+}
+
+/// A full rectangle with one rectangle cut out (used with even-odd filling).
+private struct HoleShape: Shape {
+    let hole: CGRect
+
+    func path(in rect: CGRect) -> Path {
+        var path = Path(rect)
+        path.addRect(hole)
+        return path
     }
 }

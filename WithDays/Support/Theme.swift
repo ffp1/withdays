@@ -46,6 +46,7 @@ enum SettingsKey {
     static let selectedTodoList = "selectedTodoList"
     static let todoMeta = "todoMeta"
     static let createdDefaultTodoLists = "createdDefaultTodoLists"
+    static let dimPastEvents = "dimPastEvents"
 }
 
 enum AppTheme: String, CaseIterable, Identifiable {

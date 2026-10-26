@@ -23,6 +23,10 @@ enum AppInfo {
 
     /// Newest first. Add an entry here with each release.
     static let changelog: [Release] = [
+        Release(version: "1.2.2", date: "2026.10.27", notes: [
+            "過去の予定を薄く表示する設定",
+            "移動・複製・ToDo削除の取り消し",
+        ]),
         Release(version: "1.2.1", date: "2026.10.25", notes: [
             "日付・ToDoカテゴリを横スワイプで切り替え",
             "新しいアイコン",
