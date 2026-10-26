@@ -294,12 +294,6 @@ private func pressProgress(_ isPressing: Bool, _ progress: Binding<Bool>, _ visi
         }
     }
 }
-    } else {
-        var transaction = Transaction()
-        transaction.disablesAnimations = true
-        withTransaction(transaction) { value.wrappedValue = false }
-    }
-}
 
 /// An event line with tap, double tap and a long press that draws an underline while held.
 private struct PressableChip: View {
