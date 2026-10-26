@@ -215,8 +215,8 @@ private struct DayCell: View {
             // Long-press progress: the day's outline draws itself while held.
             RoundedRectangle(cornerRadius: GridMetrics.cornerRadius, style: .continuous)
                 .trim(from: 0, to: pressing ? 1 : 0)
-                .opacity(indicatorVisible ? 1 : 0)
                 .stroke(Color.brand, style: StrokeStyle(lineWidth: 2, lineCap: .round))
+                .opacity(indicatorVisible ? 1 : 0)
                 .padding(1)
 
             Rectangle()

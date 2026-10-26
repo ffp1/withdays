@@ -53,7 +53,9 @@ jobs:
             MARKETING_VERSION="${{ steps.version.outputs.version }}" \
             CURRENT_PROJECT_VERSION="${{ github.run_number }}" \
             build 2>&1 | tee build.log | grep -E "error:|warning: .*(deprecated)|BUILD (SUCCEEDED|FAILED)" || true
-          test -d build/Build/Products/Release-iphoneos/WithDays.app
+          # The .app folder appears before Swift compiles, so check the build result itself.
+          grep -q "BUILD SUCCEEDED" build.log
+          test -d build/Build/Products/Release-iphoneos/WithDays.app/PlugIns/WithDaysWidget.appex
 
       - name: Show compile errors
         if: failure()
