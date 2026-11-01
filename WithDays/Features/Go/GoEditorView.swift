@@ -23,9 +23,9 @@ struct GoEditorView: View {
         var times: [String]
         switch target {
         case .new:
-            // Like the web app: start with 30 and 60 minutes from now.
+            // One time, 30 minutes from now; the other pages start empty.
             let calendar = CalendarMath.calendar
-            times = [30, 60].map { offset in
+            times = [30].map { offset in
                 let date = Date.now.addingTimeInterval(TimeInterval(offset * 60))
                 return GoData.format(hour: calendar.component(.hour, from: date), minute: calendar.component(.minute, from: date))
             }
@@ -96,6 +96,12 @@ struct GoEditorView: View {
             }
             .animation(.snappy, value: page)
         }
+        .onChange(of: focus) { _, new in
+            guard new != nil else { return }
+            DispatchQueue.main.async {
+                UIApplication.shared.sendAction(#selector(UIResponder.selectAll(_:)), to: nil, from: nil, for: nil)
+            }
+        }
         .task {
             try? await Task.sleep(for: .milliseconds(400))
             focus = .hour(0)
@@ -121,9 +127,9 @@ struct GoEditorView: View {
             Spacer()
             Button { dismiss() } label: {
                 Image(systemName: "xmark")
-                    .font(.system(size: 18, weight: .semibold))
+                    .font(.system(size: 15, weight: .semibold))
                     .foregroundStyle(Color.brand)
-                    .frame(width: 44, height: 44)
+                    .frame(width: 28, height: 28)
             }
             .buttonStyle(.glass)
             .buttonBorderShape(.circle)
@@ -177,7 +183,7 @@ struct GoEditorView: View {
         .disabled(!(0..<GoPreset.maxTimes).contains(target))
     }
 
-    /// Digits only, two at most; a complete valid value moves on to the next field (and page).
+    /// Digits only, two at most; complete hours move on to the minutes of the same time.
     private func binding(hour: Bool, _ index: Int) -> Binding<String> {
         Binding(
             get: { hour ? hours[index] : minutes[index] },
@@ -185,12 +191,7 @@ struct GoEditorView: View {
                 let digits = String(new.compactMap(\.wholeNumberValue).map(String.init).joined().prefix(2))
                 if hour { hours[index] = digits } else { minutes[index] = digits }
                 guard digits.count == 2, let value = Int(digits), value <= (hour ? 23 : 59) else { return }
-                if hour {
-                    focus = .minute(index)
-                } else if index + 1 < GoPreset.maxTimes {
-                    page = index + 1
-                    focus = .hour(index + 1)
-                }
+                if hour { focus = .minute(index) }
             }
         )
     }
@@ -250,9 +251,9 @@ private struct GoNameSheet: View {
                 Spacer()
                 Button { dismiss() } label: {
                     Image(systemName: "xmark")
-                        .font(.system(size: 18, weight: .semibold))
+                        .font(.system(size: 15, weight: .semibold))
                         .foregroundStyle(Color.brand)
-                        .frame(width: 44, height: 44)
+                        .frame(width: 28, height: 28)
                 }
                 .buttonStyle(.glass)
                 .buttonBorderShape(.circle)

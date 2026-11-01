@@ -6,7 +6,7 @@ enum HomeRoute: Hashable {
 }
 
 enum HomeMode: String {
-    case calendar, todo
+    case calendar, todo, go
 }
 
 struct HomeView: View {
@@ -26,7 +26,6 @@ struct HomeView: View {
     @State private var dayPager = PagerModel<Date>()
     /// Set when a double tap lands while an event sheet is opening: close it, then open a new event.
     @State private var newEventAfterDetail = false
-    @State private var showGo = false
     @State private var goLongPressed = false
     /// During a long jump the neighbouring page temporarily shows the target month, so the scroll covers one page.
     @State private var pageMonths: [Int: Int] = [:]
@@ -54,6 +53,7 @@ struct HomeView: View {
     }
 
     private var isTodo: Bool { mode == HomeMode.todo.rawValue }
+    private var isGo: Bool { mode == HomeMode.go.rawValue }
 
     private var displayedMonth: Date {
         let id = page ?? 0
@@ -63,7 +63,10 @@ struct HomeView: View {
     var body: some View {
         NavigationStack(path: $path) {
             ZStack {
-                if isTodo {
+                if isGo {
+                    GoView()
+                        .transition(.move(edge: .bottom).combined(with: .opacity))
+                } else if isTodo {
                     TodoView()
                         .transition(.asymmetric(
                             insertion: .move(edge: .trailing).combined(with: .opacity),
@@ -96,11 +99,8 @@ struct HomeView: View {
         }
         .overlay(alignment: .bottom) { trayLayer }
         .overlay(alignment: .bottom) { toastLayer }
-        .fullScreenCover(isPresented: $showGo) {
-            GoView { showGo = false }
-        }
-        .sensoryFeedback(.impact(weight: .medium), trigger: showGo) { _, new in new }
-        .onChange(of: showGo) { _, shown in if !shown { goLongPressed = false } }
+        .sensoryFeedback(.impact(weight: .medium), trigger: isGo) { _, new in new }
+        .onChange(of: isGo) { _, shown in if !shown { goLongPressed = false } }
         .sheet(isPresented: $showMonthPicker) {
             MonthPickerSheet(selected: displayedMonth) { jump(to: $0) }
                 .presentationDetents([.medium])
@@ -196,7 +196,7 @@ struct HomeView: View {
                         guard relocation == nil else { return }
                         goLongPressed = true
                         closeTray()
-                        showGo = true
+                        withAnimation(.snappy(duration: 0.35)) { mode = HomeMode.go.rawValue }
                     }
                 )
             }
@@ -249,7 +249,9 @@ struct HomeView: View {
     @ToolbarContentBuilder
     private var toolbar: some ToolbarContent {
         ToolbarItem(placement: .topBarLeading) {
-            if isTodo {
+            if isGo {
+                EmptyView()
+            } else if isTodo {
                 Text("ToDo")
                     .font(.system(size: 20, weight: .bold))
                     .foregroundStyle(Color.brand)
@@ -280,19 +282,21 @@ struct HomeView: View {
                 withAnimation(.snappy) {
                     closeTray()
                     relocation = nil
-                    mode = isTodo ? HomeMode.calendar.rawValue : HomeMode.todo.rawValue
+                    mode = isTodo || isGo ? HomeMode.calendar.rawValue : HomeMode.todo.rawValue
                 }
             } label: {
-                Image(systemName: isTodo ? "calendar" : "checkmark.circle")
+                Image(systemName: isTodo || isGo ? "calendar" : "checkmark.circle")
                     .contentTransition(.symbolEffect(.replace))
             }
-            if !isTodo {
+            if !isTodo, !isGo {
                 NavigationLink(value: HomeRoute.search) {
                     Image(systemName: "magnifyingglass")
                 }
             }
-            NavigationLink(value: HomeRoute.settings) {
-                Image(systemName: "gearshape")
+            if !isGo {
+                NavigationLink(value: HomeRoute.settings) {
+                    Image(systemName: "gearshape")
+                }
             }
         }
     }
@@ -508,7 +512,7 @@ struct HomeView: View {
             return
         }
         if url.host == "go" {
-            showGo = true
+            mode = HomeMode.go.rawValue
             return
         }
         guard let day = DeepLink.day(from: url) else { return }

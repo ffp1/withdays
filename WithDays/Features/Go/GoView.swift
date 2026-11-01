@@ -1,10 +1,8 @@
 import SwiftUI
 
 /// Go: the next target time of the selected preset and how long is left, centred on the screen.
-/// Swipe up anywhere (or tap the target) for the presets. The top-right button goes back to the calendar.
+/// Swipe up anywhere (or tap the target) for the presets. The navigation bar's button goes back to the calendar.
 struct GoView: View {
-    var onClose: () -> Void
-
     @Environment(GoStore.self) private var go
     @State private var showPresets = false
 
@@ -21,18 +19,6 @@ struct GoView: View {
                 showPresets = true
             }
         )
-        .overlay(alignment: .topTrailing) {
-            Button(action: onClose) {
-                Image(systemName: "calendar")
-                    .font(.system(size: 18, weight: .semibold))
-                    .foregroundStyle(.primary)
-                    .frame(width: 44, height: 44)
-            }
-            .buttonStyle(.glass)
-            .buttonBorderShape(.circle)
-            .padding(.trailing, 16)
-            .padding(.top, 8)
-        }
         .sheet(isPresented: $showPresets) {
             GoPresetSheet()
                 .presentationDetents([.large])
@@ -66,8 +52,11 @@ struct GoView: View {
                         .foregroundStyle(Color.brand)
                         .padding(.top, 12)
                 } else {
-                    remaining(seconds / 60, unit: "分")
-                    remaining(seconds % 60, unit: "秒")
+                    // The big digits carry a lot of line height; pull the two rows together.
+                    VStack(spacing: -34) {
+                        remaining(seconds / 60, unit: "分")
+                        remaining(seconds % 60, unit: "秒")
+                    }
                 }
             }
             .animation(.snappy, value: seconds)
