@@ -1,7 +1,6 @@
-import ActivityKit
 import SwiftUI
 
-/// Go presets for the app; saved through `GoData` so the widget and Live Activity see the same thing.
+/// Go presets for the app; saved through `GoData` shared through the App Group.
 @MainActor
 @Observable
 final class GoStore {
@@ -57,26 +56,5 @@ final class GoStore {
 
     private func persist() {
         GoData.save(state)
-        updateLiveActivity()
-    }
-
-    /// A countdown already on the Lock Screen follows the selected preset.
-    private func updateLiveActivity() {
-        let activities = Activity<GoActivityAttributes>.activities
-        guard !activities.isEmpty else { return }
-        let next = selectedPreset.flatMap { GoData.nextTarget(for: $0) }
-        Task {
-            for activity in activities {
-                if let next {
-                    let content = ActivityContent(
-                        state: GoActivityAttributes.ContentState(target: next.date, time: next.time),
-                        staleDate: next.date
-                    )
-                    await activity.update(content)
-                } else {
-                    await activity.end(nil, dismissalPolicy: .immediate)
-                }
-            }
-        }
     }
 }

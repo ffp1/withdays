@@ -27,6 +27,9 @@ struct GoView: View {
                 .presentationDragIndicator(.visible)
         }
         .sensoryFeedback(.impact(weight: .light), trigger: showPresets) { _, new in new }
+        // The countdown stays on screen: no auto-lock while Go is open.
+        .onAppear { UIApplication.shared.isIdleTimerDisabled = true }
+        .onDisappear { UIApplication.shared.isIdleTimerDisabled = false }
         .task {
             // Temporary presets expire after a day, even while this screen stays open.
             while !Task.isCancelled {
@@ -45,7 +48,6 @@ struct GoView: View {
                 Text(next.time)
                     .font(.system(size: 27, weight: .regular))
                     .monospacedDigit()
-                    .tracking(4)
                     .foregroundStyle(Self.targetGrey)
                     .contentTransition(.numericText())
                     .onTapGesture { showPresets = true }

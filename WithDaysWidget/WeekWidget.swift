@@ -8,7 +8,6 @@ struct WithDaysWidgetBundle: WidgetBundle {
         WeekWidget()
         TodoWidget()
         GoWidget()
-        GoLiveActivity()
     }
 }
 

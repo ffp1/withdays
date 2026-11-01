@@ -25,7 +25,8 @@ enum AppInfo {
     static let changelog: [Release] = [
         Release(version: "1.3.0", date: "2026.11.01", notes: [
             "Go：次の目標時刻までのカウントダウン（＋ボタン長押しで開く）",
-            "Goのロック画面ウィジェットとライブアクティビティ",
+            "Goのロック画面ウィジェット（タップでGoを開く）",
+            "Go表示中は自動ロックしない",
         ]),
         Release(version: "1.2.2", date: "2026.10.27", notes: [
             "過去の予定を薄く表示する設定",

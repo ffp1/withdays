@@ -34,7 +34,6 @@ targets:
         NSCalendarsWriteOnlyAccessUsageDescription: Appleのカレンダーに予定を追加するために使います。
         NSRemindersFullAccessUsageDescription: ToDoとしてAppleのリマインダーを表示・追加・編集するために使います。
         NSRemindersUsageDescription: ToDoとしてAppleのリマインダーを表示・追加・編集するために使います。
-        NSSupportsLiveActivities: true
         CFBundleURLTypes:
           - CFBundleURLName: com.ffuime.withdays
             CFBundleURLSchemes:
@@ -63,9 +62,6 @@ targets:
       - path: WithDays/Support/Theme.swift
       - path: WithDays/Support/AppGroup.swift
       - path: WithDays/Support/TodoMeta.swift
-      # Go presets and the Live Activity intent (the intent itself runs in the app).
-      - path: WithDays/Support/GoModel.swift
-      - path: WithDays/Support/GoActivity.swift
     info:
       path: WithDaysWidget/Info.plist
       properties:
@@ -81,7 +77,6 @@ targets:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.ffuime.withdays.widget
         PRODUCT_NAME: WithDaysWidget
-        SWIFT_ACTIVE_COMPILATION_CONDITIONS: $(inherited) WIDGET_EXTENSION
         CODE_SIGN_ENTITLEMENTS: Entitlements/WithDaysWidget.entitlements
         TARGETED_DEVICE_FAMILY: "1"
         GENERATE_INFOPLIST_FILE: NO
