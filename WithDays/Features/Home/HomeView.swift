@@ -26,6 +26,8 @@ struct HomeView: View {
     @State private var dayPager = PagerModel<Date>()
     /// Set when a double tap lands while an event sheet is opening: close it, then open a new event.
     @State private var newEventAfterDetail = false
+    @State private var showGo = false
+    @State private var goLongPressed = false
     /// During a long jump the neighbouring page temporarily shows the target month, so the scroll covers one page.
     @State private var pageMonths: [Int: Int] = [:]
     @State private var selectedDate: Date
@@ -94,6 +96,11 @@ struct HomeView: View {
         }
         .overlay(alignment: .bottom) { trayLayer }
         .overlay(alignment: .bottom) { toastLayer }
+        .fullScreenCover(isPresented: $showGo) {
+            GoView { showGo = false }
+        }
+        .sensoryFeedback(.impact(weight: .medium), trigger: showGo) { _, new in new }
+        .onChange(of: showGo) { _, shown in if !shown { goLongPressed = false } }
         .sheet(isPresented: $showMonthPicker) {
             MonthPickerSheet(selected: displayedMonth) { jump(to: $0) }
                 .presentationDetents([.medium])
@@ -173,9 +180,25 @@ struct HomeView: View {
                     Spacer()
                 }
                 circleButton(relocation != nil ? "checkmark" : "plus", prominent: true) {
-                    if relocation != nil { confirmRelocation() } else { openEditor(.new) }
+                    if relocation != nil {
+                        confirmRelocation()
+                    } else if goLongPressed {
+                        // The long press already went to Go; the release must not also add an event.
+                        goLongPressed = false
+                    } else {
+                        openEditor(.new)
+                    }
                 }
                 .disabled(relocation?.targets.isEmpty ?? false)
+                // Holding ＋ goes to Go.
+                .simultaneousGesture(
+                    LongPressGesture(minimumDuration: 0.5).onEnded { _ in
+                        guard relocation == nil else { return }
+                        goLongPressed = true
+                        closeTray()
+                        showGo = true
+                    }
+                )
             }
             .padding(20)
             .opacity(showTemplates ? 0 : 1)
@@ -482,6 +505,10 @@ struct HomeView: View {
         relocation = nil
         if url.host == "todo" {
             mode = HomeMode.todo.rawValue
+            return
+        }
+        if url.host == "go" {
+            showGo = true
             return
         }
         guard let day = DeepLink.day(from: url) else { return }

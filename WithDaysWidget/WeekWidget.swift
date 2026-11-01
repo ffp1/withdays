@@ -7,6 +7,8 @@ struct WithDaysWidgetBundle: WidgetBundle {
     var body: some Widget {
         WeekWidget()
         TodoWidget()
+        GoWidget()
+        GoLiveActivity()
     }
 }
 
