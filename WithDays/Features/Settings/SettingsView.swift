@@ -56,7 +56,7 @@ struct SettingsView: View {
             } header: {
                 Text("Go")
             } footer: {
-                Text("＋ボタン長押しで電車から作るとき、この時間より後に出る電車を入れます。")
+                Text("＋ボタン長押しで電車から作るとき、この時間より後に出発する経路を候補にします。")
             }
 
             Section {

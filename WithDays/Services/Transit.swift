@@ -17,6 +17,8 @@ enum Transit {
 
     struct Journey: Decodable {
         let departureSecs: Int
+        let arrivalSecs: Int
+        let durationSecs: Int
         let legs: [Leg]
 
         var rides: [Leg] { legs.filter { $0.kind == "transit" } }
@@ -25,10 +27,26 @@ enum Transit {
     struct Leg: Decodable {
         let kind: String
         let routeName: String?
+        let tripId: String?
         let from: Stop
         let to: Stop
         /// Seconds from the service day's 0:00; past 86400 on the next day.
         let departureSecs: Int
+    }
+
+    /// One way to get there: the trains to take, each with its departure.
+    struct Option: Identifiable {
+        struct Ride: Hashable {
+            let time: String
+            let line: String
+        }
+
+        let id: String
+        /// "池袋 - 新宿 - 新宿三丁目": where it boards, the transfers and the destination.
+        let name: String
+        let rides: [Ride]
+        let arrival: String
+        let minutes: Int
     }
 
     struct Stop: Decodable {
@@ -55,54 +73,56 @@ enum Transit {
         try await get("places/suggest", [URLQueryItem(name: "q", value: query), URLQueryItem(name: "limit", value: "12")], as: Places.self).places
     }
 
-    /// The next trains along one route, up to `limit`: the first journey that rides a train sets the route
-    /// (where it boards, on which line, where it gets off first); later searches add the following trains on it.
-    /// The name lists the boarding station, the transfers and the destination.
-    static func departures(from origin: CLLocationCoordinate2D, to place: Place, after start: Date, limit: Int) async throws -> (name: String, times: [String]) {
+    /// Ways from here to the place leaving after `start`, quickest first. A search returns six at most,
+    /// so later searches start after the last departure until there are enough.
+    static func options(from origin: CLLocationCoordinate2D, to place: Place, after start: Date, limit: Int) async throws -> [Option] {
         var calendar = Calendar(identifier: .gregorian)
         calendar.timeZone = timeZone
         let parts = calendar.dateComponents([.hour, .minute, .second], from: start)
         var cursor = (parts.hour ?? 0) * 3600 + (parts.minute ?? 0) * 60 + (parts.second ?? 0)
         var date: String?
-        var route: String?
-        var name = ""
-        var trains: [Int] = []
+        var found: [String: Journey] = [:]
 
-        for _ in 0..<5 where trains.count < limit {
+        for _ in 0..<4 where found.count < limit {
             var query = [
                 URLQueryItem(name: "from", value: "geo:\(origin.latitude),\(origin.longitude)"),
                 URLQueryItem(name: "to", value: place.endpoint),
                 URLQueryItem(name: "toLabel", value: place.name),
                 URLQueryItem(name: "time", value: clock(cursor)),
-                URLQueryItem(name: "numItineraries", value: "5"),
+                URLQueryItem(name: "numItineraries", value: "6"),
             ]
             if let date { query.append(URLQueryItem(name: "date", value: date)) }
             let plan = try await get("plan", query, as: Plan.self)
             date = plan.date
 
-            let before = trains.count
-            for journey in plan.journeys {
-                guard let first = journey.rides.first else { continue }
-                let key = "\(first.from.id)|\(first.routeName ?? "")|\(first.to.id)"
-                if route == nil {
-                    route = key
-                    name = title(of: journey, to: place)
-                }
-                guard key == route, trains.last.map({ first.departureSecs > $0 }) ?? true else { continue }
-                trains.append(first.departureSecs)
-                cursor = max(cursor, journey.departureSecs + 60)
+            // Walking all the way isn't a train to catch.
+            let trains = plan.journeys.filter { !$0.rides.isEmpty }
+            guard let last = trains.map(\.departureSecs).max() else { break }
+            for journey in trains {
+                let key = journey.rides.map { $0.tripId ?? "\($0.departureSecs)" }.joined(separator: "|")
+                if found[key] == nil { found[key] = journey }
             }
-            // Nothing new: the route has no more trains today.
-            if trains.count == before { break }
+            cursor = max(cursor, last) + 60
         }
 
-        guard !trains.isEmpty else { throw Failure(message: "電車の経路が見つかりませんでした") }
-        var times: [String] = []
-        for secs in trains.prefix(limit) {
-            let time = GoData.format(hour: secs / 3600 % 24, minute: secs % 3600 / 60)
-            if times.last != time { times.append(time) }
-        }
-        return (name, times)
+        guard !found.isEmpty else { throw Failure(message: "電車の経路が見つかりませんでした") }
+        return found
+            .sorted { ($0.value.durationSecs, $0.value.departureSecs) < ($1.value.durationSecs, $1.value.departureSecs) }
+            .prefix(limit)
+            .map { entry in
+                let journey = entry.value
+                return Option(
+                    id: entry.key,
+                    name: title(of: journey, to: place),
+                    rides: journey.rides.map { Option.Ride(time: time(of: $0.departureSecs), line: $0.routeName ?? "") },
+                    arrival: time(of: journey.arrivalSecs),
+                    minutes: Int((Double(journey.durationSecs) / 60).rounded())
+                )
+            }
+    }
+
+    private static func time(of secs: Int) -> String {
+        GoData.format(hour: secs / 3600 % 24, minute: secs % 3600 / 60)
     }
 
     /// "池袋 - 新宿 - 新宿三丁目"

@@ -24,7 +24,7 @@ enum AppInfo {
     /// Newest first. Add an entry here with each release.
     static let changelog: [Release] = [
         Release(version: "1.3.1", date: "2026.11.01", notes: [
-            "Go：＋ボタン長押しで、行き先までの電車の発車時刻からプリセットを作成",
+            "Go：＋ボタン長押しで、駅までの経路から乗る電車の発車時刻をプリセットに",
         ]),
         Release(version: "1.3.0", date: "2026.11.01", notes: [
             "Go：次の目標時刻までのカウントダウン（＋ボタン長押しで開く）",
