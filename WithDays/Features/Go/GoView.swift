@@ -3,11 +3,13 @@ import SwiftUI
 /// Go: the next target time of the selected preset and how long is left, centred on the screen.
 /// Swipe up anywhere (or tap the target) for the presets. The navigation bar's button goes back to the calendar.
 struct GoView: View {
+    /// Also opened from the navigation bar's top-left button.
+    @Binding var showPresets: Bool
+
     @Environment(GoStore.self) private var go
-    @State private var showPresets = false
 
     var body: some View {
-        TimelineView(.periodic(from: .now, by: 1)) { context in
+        TimelineView(.periodic(from: .now, by: 0.25)) { context in
             countdown(now: context.date)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -39,8 +41,13 @@ struct GoView: View {
         if let preset = go.selectedPreset, let next = GoData.nextTarget(for: preset, now: now) {
             let seconds = max(0, Int(next.date.timeIntervalSince(now).rounded(.up)))
             VStack(spacing: 12) {
-                // Target time: faint grey, each digit in its own slot (as on the web).
-                spacedDigits(next.time, width: 20, size: 27, weight: .regular, color: Self.targetGrey)
+                // Target time: faint grey, as on the web.
+                Text(next.time)
+                    .font(.system(size: 27, weight: .regular))
+                    .monospacedDigit()
+                    .tracking(4)
+                    .foregroundStyle(Self.targetGrey)
+                    .contentTransition(.numericText())
                     .onTapGesture { showPresets = true }
                 if seconds >= 3600 {
                     // An hour or more to go: a clock instead of the countdown, as on the web.

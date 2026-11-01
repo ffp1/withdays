@@ -23,6 +23,14 @@ struct GoPresetSheet: View {
         NavigationStack {
             List {
                 ForEach(go.presets) { preset in
+                    // TEMPORARY stays first; a little space separates it from the lasting presets.
+                    if !preset.isTemporary, preset.id == firstLastingID, go.presets.contains(where: \.isTemporary) {
+                        Color.clear
+                            .frame(height: 14)
+                            .listRowSeparator(.hidden)
+                            .listRowInsets(EdgeInsets())
+                            .listRowBackground(Color.clear)
+                    }
                     Button {
                         go.select(preset.id)
                         dismiss()
@@ -55,7 +63,7 @@ struct GoPresetSheet: View {
                 }
             }
             .toolbar {
-                ToolbarItem(placement: .topBarTrailing) {
+                ToolbarItem(placement: .topBarLeading) {
                     Button { dismiss() } label: { Image(systemName: "xmark") }
                 }
             }
@@ -104,17 +112,33 @@ struct GoPresetSheet: View {
             .minimumScaleFactor(0.6)
         }
         .padding(.vertical, 10)
+        // Clear of the selected row's inset bar.
+        .padding(.leading, 12)
         .frame(maxWidth: .infinity, alignment: .leading)
         .contentShape(Rectangle())
     }
 
-    /// The preset in use gets a bar on its left edge.
+    private var firstLastingID: String? {
+        go.presets.first { !$0.isTemporary }?.id
+    }
+
+    /// The preset in use: a faint tint with an inset bar on its left.
+    @ViewBuilder
     private func rowBackground(selected: Bool) -> some View {
-        HStack(spacing: 0) {
-            Rectangle()
-                .fill(selected ? Color.brand : Color.clear)
-                .frame(width: 4)
-            Spacer(minLength: 0)
+        if selected {
+            ZStack(alignment: .leading) {
+                RoundedRectangle(cornerRadius: 14, style: .continuous)
+                    .fill(Color.brand.opacity(0.07))
+                Capsule()
+                    .fill(Color.brand)
+                    .frame(width: 4)
+                    .padding(.vertical, 12)
+                    .padding(.leading, 8)
+            }
+            .padding(.horizontal, 6)
+            .padding(.vertical, 3)
+        } else {
+            Color.clear
         }
     }
 

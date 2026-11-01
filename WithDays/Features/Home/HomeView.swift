@@ -27,6 +27,7 @@ struct HomeView: View {
     /// Set when a double tap lands while an event sheet is opening: close it, then open a new event.
     @State private var newEventAfterDetail = false
     @State private var goLongPressed = false
+    @State private var goShowPresets = false
     /// During a long jump the neighbouring page temporarily shows the target month, so the scroll covers one page.
     @State private var pageMonths: [Int: Int] = [:]
     @State private var selectedDate: Date
@@ -64,7 +65,7 @@ struct HomeView: View {
         NavigationStack(path: $path) {
             ZStack {
                 if isGo {
-                    GoView()
+                    GoView(showPresets: $goShowPresets)
                         .transition(.move(edge: .bottom).combined(with: .opacity))
                 } else if isTodo {
                     TodoView()
@@ -250,7 +251,9 @@ struct HomeView: View {
     private var toolbar: some ToolbarContent {
         ToolbarItem(placement: .topBarLeading) {
             if isGo {
-                EmptyView()
+                Button { goShowPresets = true } label: {
+                    Image(systemName: "list.bullet")
+                }
             } else if isTodo {
                 Text("ToDo")
                     .font(.system(size: 20, weight: .bold))
@@ -275,7 +278,8 @@ struct HomeView: View {
                 }
             }
         }
-        .sharedBackgroundVisibility(.hidden)
+        // Go's presets button sits in glass like the right side; the calendar and ToDo titles don't.
+        .sharedBackgroundVisibility(isGo ? .visible : .hidden)
 
         ToolbarItemGroup(placement: .topBarTrailing) {
             Button {

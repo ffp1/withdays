@@ -51,7 +51,9 @@ struct GoLiveActivity: Widget {
     var body: some WidgetConfiguration {
         ActivityConfiguration(for: GoActivityAttributes.self) { context in
             GoLockScreenView(state: context.state)
-                .activityBackgroundTint(Color(.systemBackground).opacity(0.6))
+                // Dark backing so the white timer reads in light mode too.
+                .activityBackgroundTint(Color.black.opacity(0.45))
+                .activitySystemActionForegroundColor(.white)
                 .widgetURL(URL(string: "\(DeepLink.scheme)://go"))
         } dynamicIsland: { context in
             DynamicIsland {
@@ -73,7 +75,7 @@ struct GoLiveActivity: Widget {
                         .font(.system(size: 40, weight: .thin))
                         .monospacedDigit()
                         .multilineTextAlignment(.center)
-                        .foregroundStyle(Color.brand)
+                        .foregroundStyle(.white)
                 }
             } compactLeading: {
                 Image("GoLogo")
@@ -84,7 +86,7 @@ struct GoLiveActivity: Widget {
                 Text(timerInterval: Date.now...max(.now, context.state.target), countsDown: true)
                     .monospacedDigit()
                     .frame(width: 44)
-                    .foregroundStyle(Color.brand)
+                    .foregroundStyle(.white)
             } minimal: {
                 Image("GoLogo")
                     .resizable()
@@ -104,13 +106,13 @@ private struct GoLockScreenView: View {
             Text(state.time)
                 .font(.system(size: 20, weight: .light))
                 .monospacedDigit()
-                .foregroundStyle(.secondary)
+                .foregroundStyle(.white.opacity(0.6))
             // Counts down by itself; the "分 / 秒" labels of the app can't be drawn on a live timer.
             Text(timerInterval: Date.now...max(.now, state.target), countsDown: true)
                 .font(.system(size: 52, weight: .thin))
                 .monospacedDigit()
                 .multilineTextAlignment(.center)
-                .foregroundStyle(Color.brand)
+                .foregroundStyle(.white)
         }
         .frame(maxWidth: .infinity)
         .padding(.vertical, 14)

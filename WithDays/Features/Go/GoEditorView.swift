@@ -59,17 +59,16 @@ struct GoEditorView: View {
 
                 Spacer(minLength: 0)
 
-                HStack(spacing: 0) {
-                    pageButton(-1, icon: "chevron.left")
-                    TabView(selection: $page) {
-                        ForEach(0..<GoPreset.maxTimes, id: \.self) { index in
-                            slot(index).tag(index)
-                        }
+                // The pages span the whole width; the arrows float over its edges.
+                TabView(selection: $page) {
+                    ForEach(0..<GoPreset.maxTimes, id: \.self) { index in
+                        slot(index).tag(index)
                     }
-                    .tabViewStyle(.page(indexDisplayMode: .never))
-                    .frame(height: 150)
-                    pageButton(1, icon: "chevron.right")
                 }
+                .tabViewStyle(.page(indexDisplayMode: .never))
+                .frame(height: 150)
+                .overlay(alignment: .leading) { pageButton(-1, icon: "chevron.left") }
+                .overlay(alignment: .trailing) { pageButton(1, icon: "chevron.right") }
 
                 if let problem {
                     Text(problem)
@@ -183,7 +182,7 @@ struct GoEditorView: View {
         .disabled(!(0..<GoPreset.maxTimes).contains(target))
     }
 
-    /// Digits only, two at most; complete hours move on to the minutes of the same time.
+    /// Digits only, two at most; complete hours move on to the minutes, complete minutes to the next No.
     private func binding(hour: Bool, _ index: Int) -> Binding<String> {
         Binding(
             get: { hour ? hours[index] : minutes[index] },
@@ -194,7 +193,13 @@ struct GoEditorView: View {
                 // Only real typing moves on: focusing a field can write back its unchanged value,
                 // and a full hour like "13" would otherwise skip straight to the minutes.
                 guard digits != old, digits.count == 2, let value = Int(digits), value <= (hour ? 23 : 59) else { return }
-                if hour { focus = .minute(index) }
+                if hour {
+                    focus = .minute(index)
+                } else if index + 1 < GoPreset.maxTimes {
+                    // Minutes done: on to the next No.
+                    page = index + 1
+                    focus = .hour(index + 1)
+                }
             }
         )
     }
