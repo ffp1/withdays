@@ -10,12 +10,16 @@ final class GoStore {
 
     var selectedPreset: GoPreset? { GoData.selectedPreset(in: state) }
 
-    /// Names as listed: TEMPORARY for the temporary preset, and a number after repeated names.
+    /// Names as listed: TEMPORARY (or its route) for a temporary preset, and a number after repeated names.
     func displayName(of preset: GoPreset) -> String {
-        let base = preset.isTemporary ? "TEMPORARY" : preset.name
-        let same = presets.filter { $0.name == preset.name }
+        let base = Self.baseName(of: preset)
+        let same = presets.filter { Self.baseName(of: $0) == base }
         guard let index = same.firstIndex(where: { $0.id == preset.id }), index > 0 else { return base }
         return "\(base) \(index + 1)"
+    }
+
+    private static func baseName(of preset: GoPreset) -> String {
+        preset.isTemporary ? (preset.route ?? "TEMPORARY") : preset.name
     }
 
     func select(_ id: String) {
@@ -31,6 +35,14 @@ final class GoStore {
             state.presets.append(preset)
             if state.selected == nil { state.selected = preset.id }
         }
+        persist()
+    }
+
+    /// A temporary preset from trains, selected right away.
+    func addTemporary(route: String, times: [String]) {
+        let preset = GoPreset(id: GoData.newID(), name: GoPreset.temporaryName, times: times, createdAt: .now, route: route)
+        state.presets.append(preset)
+        state.selected = preset.id
         persist()
     }
 

@@ -18,6 +18,8 @@ struct GoPresetSheet: View {
     @Environment(ToastCenter.self) private var toasts
     @Environment(\.dismiss) private var dismiss
     @State private var editing: GoEditTarget?
+    @State private var showTransit = false
+    @State private var longPressed = false
 
     var body: some View {
         NavigationStack {
@@ -75,7 +77,10 @@ struct GoPresetSheet: View {
                             .id(toast.id)
                     }
                     Spacer(minLength: 0)
-                    Button { editing = .new } label: {
+                    Button {
+                        // The long press already opened the train search; the release must not also open the editor.
+                        if longPressed { longPressed = false } else { editing = .new }
+                    } label: {
                         Image(systemName: "plus")
                             .font(.system(size: 26.4, weight: .semibold))
                             .foregroundStyle(.white)
@@ -83,12 +88,25 @@ struct GoPresetSheet: View {
                     }
                     .buttonStyle(.glassProminent)
                     .buttonBorderShape(.circle)
+                    // Holding ＋ makes a temporary preset from trains.
+                    .simultaneousGesture(
+                        LongPressGesture(minimumDuration: 0.5).onEnded { _ in
+                            longPressed = true
+                            showTransit = true
+                        }
+                    )
+                    .sensoryFeedback(.impact(weight: .medium), trigger: showTransit) { _, new in new }
                 }
                 .padding(20)
             }
         }
         .sheet(item: $editing) { target in
             GoEditorView(target: target)
+        }
+        .sheet(isPresented: $showTransit) {
+            GoTransitSheet { dismiss() }
+                .presentationDetents([.large])
+                .presentationDragIndicator(.visible)
         }
     }
 

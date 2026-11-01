@@ -7,6 +7,8 @@ struct GoPreset: Codable, Identifiable, Equatable {
     var name: String
     var times: [String]
     var createdAt: Date
+    /// A temporary preset made from trains shows its route ("池袋 - 新宿 - 新宿三丁目") instead of TEMPORARY.
+    var route: String? = nil
 
     static let temporaryName = "temp"
     static let maxTimes = 10
@@ -19,7 +21,7 @@ struct GoState: Codable, Equatable {
     var selected: String?
 }
 
-/// Go presets live in the App Group so the lock screen widget / Live Activity can read them.
+/// Go presets live in the App Group.
 enum GoData {
     private static let key = "goState"
     static let temporaryLifetime: TimeInterval = 24 * 60 * 60

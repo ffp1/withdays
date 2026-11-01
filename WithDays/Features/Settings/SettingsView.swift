@@ -8,6 +8,7 @@ struct SettingsView: View {
     @AppStorage(SettingsKey.theme, store: AppGroup.defaults) private var theme = AppTheme.system.rawValue
     @AppStorage(SettingsKey.weekStart, store: AppGroup.defaults) private var weekStart = 1
     @AppStorage(SettingsKey.dimPastEvents) private var dimPast = false
+    @AppStorage(SettingsKey.goTransitMargin) private var transitMargin = 2
 
     var body: some View {
         List {
@@ -48,6 +49,14 @@ struct SettingsView: View {
                         }
                     }
                 }
+            }
+
+            Section {
+                Stepper("電車の余裕 \(transitMargin)分", value: $transitMargin, in: 0...30)
+            } header: {
+                Text("Go")
+            } footer: {
+                Text("＋ボタン長押しで電車から作るとき、この時間より後に出る電車を入れます。")
             }
 
             Section {

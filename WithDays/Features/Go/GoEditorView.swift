@@ -235,6 +235,8 @@ struct GoEditorView: View {
             // A temporary preset that gets a name stops expiring; naming one temporary restarts its day.
             if preset.isTemporary != (finalName == GoPreset.temporaryName) { preset.createdAt = .now }
             preset.name = finalName
+            // A named preset is no longer the train route's temporary.
+            if finalName != GoPreset.temporaryName { preset.route = nil }
             preset.times = times
             go.save(preset)
         }
