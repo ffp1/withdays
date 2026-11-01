@@ -38,22 +38,17 @@ struct GoView: View {
     private func countdown(now: Date) -> some View {
         if let preset = go.selectedPreset, let next = GoData.nextTarget(for: preset, now: now) {
             let seconds = max(0, Int(next.date.timeIntervalSince(now).rounded(.up)))
-            VStack(spacing: 4) {
-                Text(next.time)
-                    .font(.system(size: 34, weight: .light))
-                    .monospacedDigit()
-                    .foregroundStyle(.secondary)
-                    .contentTransition(.numericText())
+            VStack(spacing: 12) {
+                // Target time: faint grey, each digit in its own slot (as on the web).
+                spacedDigits(next.time, width: 20, size: 27, weight: .regular, color: Self.targetGrey)
                     .onTapGesture { showPresets = true }
                 if seconds >= 3600 {
                     // An hour or more to go: a clock instead of the countdown, as on the web.
                     Image(systemName: "clock.arrow.circlepath")
                         .font(.system(size: 96, weight: .ultraLight))
-                        .foregroundStyle(Color.brand)
-                        .padding(.top, 12)
+                        .foregroundStyle(Self.goBlue)
                 } else {
-                    // The big digits carry a lot of line height; pull the two rows together.
-                    VStack(spacing: -34) {
+                    VStack(spacing: -17) {
                         remaining(seconds / 60, unit: "分")
                         remaining(seconds % 60, unit: "秒")
                     }
@@ -64,21 +59,36 @@ struct GoView: View {
         } else {
             Text("プリセットがありません")
                 .font(.system(size: 17, weight: .light))
-                .foregroundStyle(.secondary)
+                .foregroundStyle(Self.targetGrey)
                 .onTapGesture { showPresets = true }
         }
     }
 
+    /// #27a and #aaa from the web app.
+    private static let goBlue = Color(uiColor: UIColor(hex: 0x2277AA))
+    private static let targetGrey = Color(uiColor: UIColor(hex: 0xAAAAAA))
+
     private func remaining(_ value: Int, unit: String) -> some View {
-        HStack(alignment: .lastTextBaseline, spacing: 10) {
-            Text(String(format: "%02d", value))
-                .font(.system(size: 132, weight: .thin))
-                .monospacedDigit()
-                .foregroundStyle(Color.brand)
-                .contentTransition(.numericText(countsDown: true))
+        HStack(alignment: .lastTextBaseline, spacing: 8) {
+            spacedDigits(String(format: "%02d", value), width: 76, size: 112, weight: .ultraLight, color: Self.goBlue)
             Text(unit)
-                .font(.system(size: 46, weight: .thin))
-                .foregroundStyle(Color.brand.opacity(0.6))
+                .font(.system(size: 64, weight: .ultraLight))
+                .foregroundStyle(Self.goBlue.opacity(0.67))
+        }
+    }
+
+    /// Each character in a fixed-width slot, which spaces the digits like the web app and lets
+    /// every digit roll on its own.
+    private func spacedDigits(_ text: String, width: CGFloat, size: CGFloat, weight: Font.Weight, color: Color) -> some View {
+        HStack(spacing: 0) {
+            ForEach(Array(text.enumerated()), id: \.offset) { _, character in
+                Text(String(character))
+                    .font(.system(size: size, weight: weight))
+                    .monospacedDigit()
+                    .foregroundStyle(color)
+                    .contentTransition(.numericText(countsDown: true))
+                    .frame(width: character == ":" ? width * 0.3 : width)
+            }
         }
     }
 }

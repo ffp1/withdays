@@ -189,8 +189,11 @@ struct GoEditorView: View {
             get: { hour ? hours[index] : minutes[index] },
             set: { new in
                 let digits = String(new.compactMap(\.wholeNumberValue).map(String.init).joined().prefix(2))
+                let old = hour ? hours[index] : minutes[index]
                 if hour { hours[index] = digits } else { minutes[index] = digits }
-                guard digits.count == 2, let value = Int(digits), value <= (hour ? 23 : 59) else { return }
+                // Only real typing moves on: focusing a field can write back its unchanged value,
+                // and a full hour like "13" would otherwise skip straight to the minutes.
+                guard digits != old, digits.count == 2, let value = Int(digits), value <= (hour ? 23 : 59) else { return }
                 if hour { focus = .minute(index) }
             }
         )
