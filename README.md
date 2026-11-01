@@ -42,7 +42,7 @@ git push origin v1.0.0
 SideStore の「Sources」に次の URL を追加します（リポジトリが public である必要があります）。
 
 ```
-https://raw.githubusercontent.com/ffp1/withdays/main/source.json
+https://raw.githubusercontent.com/ffuime/withdays/main/source.json
 ```
 
 または Release から `WithDays.ipa` をダウンロードして SideStore で直接インストールします。
