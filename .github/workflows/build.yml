@@ -12,7 +12,8 @@ permissions:
 
 jobs:
   build:
-    runs-on: macos-15
+    # arm64 macOS runners are often stuck queued for capacity; the Intel image has the same Xcode.
+    runs-on: macos-15-intel
     steps:
       - uses: actions/checkout@v4
 
