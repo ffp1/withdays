@@ -12,28 +12,10 @@ struct MoCalendarView: View {
     private let baseMonth = CalendarMath.startOfMonth(.now)
 
     private static let range = -600...600
-    private static let rowHeight: CGFloat = 54
+    private static let rowHeight: CGFloat = 62
 
     var body: some View {
         VStack(spacing: 0) {
-            HStack {
-                Text(Fmt.monthTitle(month(offset)))
-                    .font(.system(size: 20, weight: .bold))
-                    .monospacedDigit()
-                    .contentTransition(.numericText(value: Double(offset)))
-                    .animation(.snappy, value: offset)
-                Spacer()
-                Button(action: backToToday) {
-                    Image(systemName: "arrow.uturn.left")
-                        .font(.system(size: 16, weight: .semibold))
-                        .frame(width: 40, height: 40)
-                }
-                .buttonStyle(.glass)
-                .buttonBorderShape(.circle)
-            }
-            .padding(.horizontal, 16)
-            .padding(.vertical, 8)
-
             WeekdayHeader(weekStart: weekStart)
 
             TabView(selection: $offset) {
@@ -53,6 +35,22 @@ struct MoCalendarView: View {
             dayList
         }
         .sensoryFeedback(.selection, trigger: selectedDate)
+        .toolbar {
+            ToolbarItem(placement: .topBarLeading) {
+                Text(Fmt.monthTitle(month(offset)))
+                    .font(.system(size: 20, weight: .bold))
+                    .monospacedDigit()
+                    .contentTransition(.numericText(value: Double(offset)))
+                    .animation(.snappy, value: offset)
+                    .fixedSize()
+            }
+            .sharedBackgroundVisibility(.hidden)
+            ToolbarItem(placement: .topBarTrailing) {
+                Button(action: backToToday) {
+                    Image(systemName: "arrow.uturn.left")
+                }
+            }
+        }
         .sheet(item: $editing) { record in
             MoRecordEditor(record: record)
         }
@@ -75,7 +73,7 @@ struct MoCalendarView: View {
         return VStack(spacing: 0) {
             HStack {
                 Text(Fmt.fullDate(selectedDate))
-                    .font(.system(size: 15, weight: .bold))
+                    .font(.system(size: 16, weight: .bold))
                 Spacer()
                 if !records.isEmpty {
                     Text(net == 0 ? "¥0" : "\(net > 0 ? "+" : "-")\(MoFormat.amount(abs(net)))")
@@ -91,6 +89,8 @@ struct MoCalendarView: View {
             List {
                 ForEach(records) { record in
                     row(record)
+                        .contentShape(Rectangle())
+                        .onTapGesture { editing = record }
                         .swipeActions(edge: .trailing) {
                             Button(role: .destructive) { delete(record) } label: {
                                 Image(systemName: "trash")
@@ -121,7 +121,7 @@ struct MoCalendarView: View {
             MoIcon(name: record.icon, size: 20)
                 .foregroundStyle(record.kind.color)
                 .frame(width: 40, height: 40)
-                .background(RoundedRectangle(cornerRadius: 12, style: .continuous).fill(record.kind.color.opacity(0.1)))
+                .background(Circle().fill(record.kind.color.opacity(0.1)))
             VStack(alignment: .leading, spacing: 2) {
                 Text(record.category)
                     .font(.system(size: 15, weight: .bold))
@@ -192,12 +192,12 @@ private struct MoMonthGrid: View {
                 .fill(isSelected ? Color.brand : Color.dayLine)
                 .frame(height: 1)
                 .padding(.horizontal, 3)
-                .offset(y: 20)
+                .offset(y: 24)
             Text("\(CalendarMath.day(day))")
-                .font(.system(size: 12))
+                .font(.system(size: 15))
                 .monospacedDigit()
                 .foregroundStyle(isToday ? Color.white : Color.dayNumber(weekday: CalendarMath.weekday(day), isHoliday: isHoliday))
-                .frame(minWidth: 18, minHeight: 18)
+                .frame(minWidth: 22, minHeight: 22)
                 .background { if isToday { Circle().fill(Color.brand) } }
                 .padding(.leading, 2)
                 .padding(.top, 1)
@@ -211,13 +211,13 @@ private struct MoMonthGrid: View {
                         .foregroundStyle(Color.moIncome)
                 }
             }
-            .font(MoFormat.number(11))
+            .font(MoFormat.number(13))
             .monospacedDigit()
             .lineLimit(1)
-            .minimumScaleFactor(0.6)
+            .minimumScaleFactor(0.55)
             .frame(maxWidth: .infinity, alignment: .trailing)
             .padding(.horizontal, 3)
-            .padding(.top, 23)
+            .padding(.top, 27)
         }
         .frame(maxWidth: .infinity)
         .frame(height: rowHeight, alignment: .topLeading)

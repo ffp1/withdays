@@ -1,6 +1,6 @@
 import SwiftUI
 
-/// Add a category or edit one: a name and an icon (searchable by its English name).
+/// Add a category or edit one: a name and an icon (searchable by group or symbol name).
 struct MoCategorySheet: View {
     enum Target: Identifiable {
         case new
@@ -30,10 +30,10 @@ struct MoCategorySheet: View {
         switch target {
         case .new:
             _name = State(initialValue: "")
-            _icon = State(initialValue: MoData.icons[0])
+            _icon = State(initialValue: "tag")
         case .edit(let category):
             _name = State(initialValue: category.label)
-            _icon = State(initialValue: category.icon)
+            _icon = State(initialValue: MoIcons.resolve(category.icon))
         }
     }
 
@@ -70,27 +70,31 @@ struct MoCategorySheet: View {
                         HStack(spacing: 8) {
                             Image(systemName: "magnifyingglass")
                                 .foregroundStyle(.secondary)
-                            TextField("アイコン名を検索", text: $query)
+                            TextField("検索（例：食事、train）", text: $query)
                                 .textInputAutocapitalization(.never)
                                 .autocorrectionDisabled()
                         }
                         .padding(.horizontal, 12)
                         .frame(height: 40)
-                        .background(RoundedRectangle(cornerRadius: 12, style: .continuous).fill(Color(.secondarySystemFill)))
+                        .background(Capsule().fill(Color.primary.opacity(0.05)))
 
-                        LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 8), count: 6), spacing: 8) {
-                            ForEach(icons, id: \.self) { item in
-                                Button { icon = item } label: {
-                                    MoIcon(name: item, size: 24)
-                                        .foregroundStyle(icon == item ? Color.white : Color.primary)
-                                        .frame(maxWidth: .infinity)
-                                        .aspectRatio(1, contentMode: .fit)
-                                        .background(
-                                            RoundedRectangle(cornerRadius: 12, style: .continuous)
-                                                .fill(icon == item ? kind.color : Color(.secondarySystemFill))
-                                        )
+                        ForEach(MoIcons.filtered(query)) { group in
+                            Text(group.title)
+                                .font(.system(size: 12, weight: .bold))
+                                .foregroundStyle(.secondary)
+                                .padding(.top, 6)
+                            LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 8), count: 6), spacing: 8) {
+                                ForEach(group.symbols, id: \.self) { item in
+                                    Button { icon = item } label: {
+                                        Image(systemName: item)
+                                            .font(.system(size: 20, weight: .medium))
+                                            .foregroundStyle(icon == item ? Color.white : Color.primary)
+                                            .frame(maxWidth: .infinity)
+                                            .aspectRatio(1, contentMode: .fit)
+                                            .background(Circle().fill(icon == item ? kind.color : Color.primary.opacity(0.05)))
+                                    }
+                                    .buttonStyle(.plain)
                                 }
-                                .buttonStyle(.plain)
                             }
                         }
                     }
@@ -123,14 +127,6 @@ struct MoCategorySheet: View {
 
     private var isDuplicate: Bool {
         mo.categories(kind).contains { $0.label == trimmed && $0.label != original?.label }
-    }
-
-    /// The current icon stays first while editing, so it's in view.
-    private var icons: [String] {
-        let text = query.trimmingCharacters(in: .whitespaces).lowercased()
-        var list = text.isEmpty ? MoData.icons : MoData.icons.filter { $0.contains(text) }
-        if text.isEmpty, !list.contains(icon) { list.insert(icon, at: 0) }
-        return list
     }
 
     private func save() {
@@ -180,11 +176,8 @@ struct MoRecordEditor: View {
                                 VStack(spacing: 4) {
                                     MoIcon(name: category.icon, size: 22)
                                         .foregroundStyle(selected ? Color.white : record.kind.color)
-                                        .frame(width: 48, height: 48)
-                                        .background(
-                                            RoundedRectangle(cornerRadius: 14, style: .continuous)
-                                                .fill(selected ? record.kind.color : record.kind.color.opacity(0.1))
-                                        )
+                                        .frame(width: 52, height: 52)
+                                        .background(Circle().fill(selected ? record.kind.color : record.kind.color.opacity(0.1)))
                                     Text(category.label)
                                         .font(.system(size: 11, weight: .bold))
                                         .lineLimit(1)

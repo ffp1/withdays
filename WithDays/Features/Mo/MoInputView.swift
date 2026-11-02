@@ -14,8 +14,10 @@ struct MoInputView: View {
     @State private var shake = 0
     @State private var saved = 0
     @FocusState private var memoFocused: Bool
+    @State private var amountWidth: CGFloat = 0
 
-    private static let maxDigits = 8
+    /// Up to 15 digits; past 8 the amount shrinks to stay on one line.
+    private static let maxDigits = 15
 
     var body: some View {
         VStack(spacing: 0) {
@@ -43,6 +45,15 @@ struct MoInputView: View {
             if editing { withAnimation(.snappy) { editing = false } }
         }
         .sensoryFeedback(.success, trigger: saved)
+        // While editing categories, the bar offers 完了.
+        .toolbar {
+            if editing {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button("完了") { withAnimation(.snappy) { editing = false } }
+                        .fontWeight(.bold)
+                }
+            }
+        }
         .sensoryFeedback(.error, trigger: shake)
         .sheet(item: $categorySheet) { target in
             MoCategorySheet(target: target, kind: kind)
@@ -72,25 +83,18 @@ struct MoInputView: View {
                 .buttonStyle(.plain)
             }
         }
-        .overlay(alignment: .trailing) {
-            if editing {
-                Button("完了") { withAnimation(.snappy) { editing = false } }
-                    .font(.system(size: 15, weight: .bold))
-                    .buttonStyle(.glass)
-                    .offset(x: 90)
-                    .transition(.scale.combined(with: .opacity))
-            }
-        }
     }
 
+    /// Sized so eight digits (with their commas) just fill the width; longer amounts shrink.
     private var amountView: some View {
-        VStack(spacing: 0) {
+        let size = Self.amountFontSize(width: amountWidth)
+        return VStack(spacing: 0) {
             Text(digits.isEmpty ? "-" : MoFormat.amount(Int(digits) ?? 0))
-                .font(MoFormat.number(72))
+                .font(MoFormat.number(size))
                 .monospacedDigit()
                 .foregroundStyle(kind.color)
                 .lineLimit(1)
-                .minimumScaleFactor(0.4)
+                .minimumScaleFactor(0.3)
                 .contentTransition(.numericText())
                 .animation(.snappy(duration: 0.2), value: digits)
                 .keyframeAnimator(initialValue: 0.0, trigger: shake) { content, x in
@@ -104,13 +108,24 @@ struct MoInputView: View {
                         LinearKeyframe(0, duration: 0.05)
                     }
                 }
-                .frame(height: 80)
-                .padding(.horizontal, 24)
+                .frame(maxWidth: .infinity)
+                .frame(height: size * 1.15)
+                .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { amountWidth = $0 }
             Text(digits.isEmpty ? "金額を入力" : "カテゴリを選択")
                 .font(.system(size: 13, weight: .bold))
                 .foregroundStyle(.secondary)
                 .contentTransition(.opacity)
         }
+        .padding(.horizontal, 16)
+    }
+
+    private static func amountFontSize(width: CGFloat) -> CGFloat {
+        guard width > 0 else { return 80 }
+        let base: CGFloat = 100
+        let plain = UIFont.systemFont(ofSize: base, weight: .semibold)
+        let font = UIFont(descriptor: plain.fontDescriptor.withDesign(.rounded) ?? plain.fontDescriptor, size: base)
+        let measured = ("88,888,888" as NSString).size(withAttributes: [.font: font]).width
+        return floor(base * width / measured)
     }
 
     private var categoryStrip: some View {
@@ -135,6 +150,7 @@ struct MoInputView: View {
                             withAnimation(.snappy) { mo.moveCategory(dragged, to: category, kind: kind) }
                         }
                     )
+                    .containerRelativeFrame(.horizontal, count: 9, span: 2, spacing: 10)
                 }
                 Button {
                     withAnimation(.snappy) { editing = false }
@@ -142,20 +158,25 @@ struct MoInputView: View {
                 } label: {
                     VStack(spacing: 6) {
                         Image(systemName: "plus")
-                            .font(.system(size: 22, weight: .semibold))
-                            .frame(width: 60, height: 60)
-                            .background(RoundedRectangle(cornerRadius: 18, style: .continuous).strokeBorder(style: StrokeStyle(lineWidth: 1.5, dash: [4, 4])))
+                            .font(.system(size: 26, weight: .semibold))
+                            .frame(maxWidth: .infinity)
+                            .aspectRatio(1, contentMode: .fit)
+                            .background(Circle().strokeBorder(style: StrokeStyle(lineWidth: 1.5, dash: [4, 4])))
                         Text("カテゴリ追加")
-                            .font(.system(size: 11, weight: .bold))
+                            .font(.system(size: 12, weight: .bold))
+                            .lineLimit(1)
                     }
                     .foregroundStyle(.secondary)
-                    .frame(width: 72)
                 }
                 .buttonStyle(.plain)
+                .containerRelativeFrame(.horizontal, count: 9, span: 2, spacing: 10)
             }
-            .padding(.horizontal, 20)
             .padding(.vertical, 8)
+            .scrollTargetLayout()
         }
+        // Four and a half circles across, so it shows there are more to the side.
+        .contentMargins(.horizontal, 16, for: .scrollContent)
+        .scrollTargetBehavior(.viewAligned)
         .scrollIndicators(.hidden)
         .animation(.snappy, value: categories)
     }
@@ -179,7 +200,7 @@ struct MoInputView: View {
         }
         .padding(.horizontal, 14)
         .frame(height: 44)
-        .background(RoundedRectangle(cornerRadius: 14, style: .continuous).fill(Color(.secondarySystemFill)))
+        .background(Capsule().fill(Color.primary.opacity(0.035)))
         .animation(.snappy, value: memo.isEmpty)
     }
 
@@ -240,16 +261,16 @@ private struct MoCategoryTile: View {
 
     var body: some View {
         let tile = VStack(spacing: 6) {
-            MoIcon(name: category.icon, size: 28)
+            MoIcon(name: category.icon, size: 34)
                 .foregroundStyle(kind.color)
-                .frame(width: 60, height: 60)
-                .background(RoundedRectangle(cornerRadius: 18, style: .continuous).fill(kind.color.opacity(targeted ? 0.25 : 0.1)))
+                .frame(maxWidth: .infinity)
+                .aspectRatio(1, contentMode: .fit)
+                .background(Circle().fill(kind.color.opacity(targeted ? 0.25 : 0.1)))
             Text(category.label)
-                .font(.system(size: 11, weight: .bold))
+                .font(.system(size: 12, weight: .bold))
                 .foregroundStyle(.primary)
                 .lineLimit(1)
         }
-        .frame(width: 72)
         .overlay(alignment: .topTrailing) {
             if editing {
                 Button(action: onDelete) {
@@ -260,7 +281,7 @@ private struct MoCategoryTile: View {
                         .background(Circle().fill(Color(.darkGray)))
                 }
                 .buttonStyle(.plain)
-                .offset(x: -2, y: -6)
+                .offset(x: 2, y: -2)
                 .transition(.scale.combined(with: .opacity))
             }
         }
@@ -274,10 +295,10 @@ private struct MoCategoryTile: View {
             // While editing, hold and drag a tile onto another to move it there.
             tile
                 .draggable(category.label) {
-                    MoIcon(name: category.icon, size: 28)
+                    MoIcon(name: category.icon, size: 30)
                         .foregroundStyle(kind.color)
-                        .frame(width: 60, height: 60)
-                        .background(RoundedRectangle(cornerRadius: 18, style: .continuous).fill(kind.color.opacity(0.15)))
+                        .frame(width: 72, height: 72)
+                        .background(Circle().fill(kind.color.opacity(0.15)))
                 }
                 .dropDestination(for: String.self) { labels, _ in
                     guard let label = labels.first, label != category.label else { return false }

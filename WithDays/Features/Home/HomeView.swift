@@ -30,6 +30,9 @@ struct HomeView: View {
     @State private var fabMenuShown = false
     @State private var fabHover: HomeMode?
     @State private var fabMenuFrames: [HomeMode: CGRect] = [:]
+    @State private var fabFrame: CGRect = .zero
+    /// Where the finger is while the menu is up; letting go on ＋ itself adds an event as a tap would.
+    @State private var fabPoint: CGPoint?
     @State private var fabLongPressed = false
     /// During a long jump the neighbouring page temporarily shows the target month, so the scroll covers one page.
     @State private var pageMonths: [Int: Int] = [:]
@@ -101,8 +104,6 @@ struct HomeView: View {
                 .animation(.snappy(duration: 0.35), value: mode)
                 .onChange(of: mode) { _, new in UserDefaults.standard.set(new, forKey: SettingsKey.homeMode) }
                 .toolbar { toolbar }
-                // Mo has its own headers and tab bar.
-                .toolbar(isMo ? .hidden : .visible, for: .navigationBar)
                 .navigationBarTitleDisplayMode(.inline)
                 .navigationDestination(for: HomeRoute.self) { route in
                     switch route {
@@ -225,6 +226,7 @@ struct HomeView: View {
                     }
                 }
                 .disabled(relocation?.targets.isEmpty ?? false)
+                .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { fabFrame = $0 }
                 // Holding ＋ floats Mo / Go above it; slide onto one and let go to open it.
                 .simultaneousGesture(
                     LongPressGesture(minimumDuration: 0.5)
@@ -236,17 +238,25 @@ struct HomeView: View {
                                 closeTray()
                                 withAnimation(.spring(response: 0.35, dampingFraction: 0.75)) { fabMenuShown = true }
                             }
-                            if let drag { fabHover = fabMenuItem(at: drag.location) }
+                            if let drag {
+                                fabPoint = drag.location
+                                fabHover = fabMenuItem(at: drag.location)
+                            }
                         }
                         .onEnded { _ in
                             guard fabMenuShown else { return }
                             let target = fabHover
-                            withAnimation(.snappy(duration: 0.25)) {
+                            // Not moved at all, or let go on ＋: a new event, as if it had been tapped.
+                            let onFab = fabPoint.map { fabFrame.insetBy(dx: -8, dy: -8).contains($0) } ?? true
+                            withAnimation(.spring(response: 0.3, dampingFraction: 0.85)) {
                                 fabMenuShown = false
                                 fabHover = nil
                             }
+                            fabPoint = nil
                             if let target {
                                 withAnimation(.snappy(duration: 0.35)) { mode = target.rawValue }
+                            } else if onFab {
+                                openEditor(.new)
                             }
                             // The button may or may not see the release; don't let the flag eat a later tap.
                             DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { fabLongPressed = false }
@@ -309,7 +319,7 @@ struct HomeView: View {
                     .foregroundStyle(Color.brand)
                     .fixedSize()
                     .transition(.blurReplace)
-            } else if !isGo {
+            } else if !isGo, !isMo {
                 Button {
                     showMonthPicker = true
                 } label: {
@@ -330,7 +340,8 @@ struct HomeView: View {
         .sharedBackgroundVisibility(.hidden)
 
         ToolbarItemGroup(placement: .topBarTrailing) {
-            if !isGo {
+            // Go keeps a clean screen; Mo's tabs bring their own buttons.
+            if !isGo, !isMo {
                 Button {
                     withAnimation(.snappy) {
                         closeTray()
@@ -485,30 +496,56 @@ struct HomeView: View {
         }
     }
 
-    /// The menu over a dimmed, blurred screen: Go on top, Mo just above ＋ (a copy of it, drawn over the blur).
+    /// The menu over a dimmed, blurred screen. Mo and Go pop up out of ＋ (a copy of it, drawn over the blur),
+    /// one after the other.
     @ViewBuilder
     private var fabMenuLayer: some View {
-        if fabMenuShown {
-            ZStack(alignment: .bottomTrailing) {
+        ZStack(alignment: .bottomTrailing) {
+            if fabMenuShown {
                 Rectangle()
                     .fill(.ultraThinMaterial)
-                    .overlay(Color.black.opacity(0.3))
+                    .environment(\.colorScheme, .dark)
+                    .overlay(Color.black.opacity(0.25))
                     .ignoresSafeArea()
                     .transition(.opacity)
-                VStack(alignment: .trailing, spacing: 14) {
-                    fabMenuRow(.go, name: "Go", logo: "GoLogo")
-                    fabMenuRow(.mo, name: "Mo", logo: "MoLogo")
-                    Image(systemName: "plus")
-                        .font(.system(size: 26.4, weight: .semibold))
-                        .foregroundStyle(.white)
-                        .frame(width: 56, height: 56)
-                        .glassEffect(.regular.tint(.brand), in: .circle)
-                }
-                .padding(20)
-                .transition(.offset(y: 30).combined(with: .opacity))
             }
-            .allowsHitTesting(false)
+            VStack(alignment: .trailing, spacing: 16) {
+                if fabMenuShown {
+                    fabMenuRow(.go, name: "Go", logo: "GoLogo")
+                        .transition(fabMenuTransition(delay: 0.05))
+                    fabMenuRow(.mo, name: "Mo", logo: "MoLogo")
+                        .transition(fabMenuTransition(delay: 0))
+                }
+                if fabMenuShown {
+                    Button {} label: {
+                        Image(systemName: "plus")
+                            .font(.system(size: 26.4, weight: .semibold))
+                            .foregroundStyle(.white)
+                            .frame(width: 56, height: 56)
+                    }
+                    .buttonStyle(.glassProminent)
+                    .buttonBorderShape(.circle)
+                    .scaleEffect(fabHover == nil && fabPoint.map { fabFrame.contains($0) } != false ? 1.06 : 1)
+                    .animation(.spring(response: 0.25, dampingFraction: 0.7), value: fabHover)
+                }
+            }
+            .padding(20)
         }
+        .allowsHitTesting(false)
+    }
+
+    /// Springs up out of ＋: grows from its corner and rises into place.
+    private func fabMenuTransition(delay: Double) -> AnyTransition {
+        .asymmetric(
+            insertion: .scale(scale: 0.2, anchor: .bottomTrailing)
+                .combined(with: .offset(y: 36))
+                .combined(with: .opacity)
+                .animation(.spring(response: 0.38, dampingFraction: 0.68).delay(delay)),
+            removal: .scale(scale: 0.4, anchor: .bottomTrailing)
+                .combined(with: .offset(y: 24))
+                .combined(with: .opacity)
+                .animation(.easeIn(duration: 0.15))
+        )
     }
 
     private func fabMenuRow(_ target: HomeMode, name: String, logo: String) -> some View {
@@ -517,17 +554,21 @@ struct HomeView: View {
             Text(name)
                 .font(.system(size: 22, weight: .regular))
                 .foregroundStyle(.white)
+                .shadow(color: .black.opacity(0.25), radius: 6, y: 2)
             Image(logo)
                 .renderingMode(.template)
                 .resizable()
                 .scaledToFit()
-                .frame(width: 30, height: 30)
+                .frame(width: 26, height: 26)
                 .foregroundStyle(hovered ? Color.white : Color.brand)
-                .frame(width: 56, height: 56)
-                .glassEffect(hovered ? .regular.tint(.brand) : .regular, in: .circle)
+                .frame(width: 52, height: 52)
+                .background(Circle().fill(hovered ? Color.brand : Color.white))
+                .shadow(color: .black.opacity(0.18), radius: 10, y: 4)
+                // Lines up with the middle of ＋ below.
+                .padding(.trailing, 2)
         }
-        .scaleEffect(hovered ? 1.12 : 1, anchor: .trailing)
-        .animation(.spring(response: 0.25, dampingFraction: 0.7), value: hovered)
+        .scaleEffect(hovered ? 1.1 : 1, anchor: .trailing)
+        .animation(.spring(response: 0.25, dampingFraction: 0.65), value: hovered)
         .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { fabMenuFrames[target] = $0 }
     }
 

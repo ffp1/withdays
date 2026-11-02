@@ -35,8 +35,6 @@ targets:
         NSRemindersFullAccessUsageDescription: ToDoとしてAppleのリマインダーを表示・追加・編集するために使います。
         NSRemindersUsageDescription: ToDoとしてAppleのリマインダーを表示・追加・編集するために使います。
         NSLocationWhenInUseUsageDescription: Goで最寄り駅から電車の時刻を調べるために使います。
-        UIAppFonts:
-          - BalooBhai2.ttf
         CFBundleURLTypes:
           - CFBundleURLName: com.ffuime.withdays
             CFBundleURLSchemes:

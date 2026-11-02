@@ -9,30 +9,30 @@ struct MoStatsView: View {
     private static let range = -600...600
 
     var body: some View {
-        VStack(spacing: 0) {
-            HStack {
-                arrow("chevron.left", step: -1)
-                Spacer()
+        TabView(selection: $offset) {
+            ForEach(Self.range, id: \.self) { index in
+                MoStatsPage(month: month(index))
+                    .tag(index)
+            }
+        }
+        .tabViewStyle(.page(indexDisplayMode: .never))
+        .sensoryFeedback(.selection, trigger: offset)
+        // The same bar as the calendar's: month on the left, arrows on the right.
+        .toolbar {
+            ToolbarItem(placement: .topBarLeading) {
                 Text(Fmt.monthTitle(month(offset)))
                     .font(.system(size: 20, weight: .bold))
                     .monospacedDigit()
                     .contentTransition(.numericText(value: Double(offset)))
                     .animation(.snappy, value: offset)
-                Spacer()
+                    .fixedSize()
+            }
+            .sharedBackgroundVisibility(.hidden)
+            ToolbarItemGroup(placement: .topBarTrailing) {
+                arrow("chevron.left", step: -1)
                 arrow("chevron.right", step: 1)
             }
-            .padding(.horizontal, 16)
-            .padding(.vertical, 8)
-
-            TabView(selection: $offset) {
-                ForEach(Self.range, id: \.self) { index in
-                    MoStatsPage(month: month(index))
-                        .tag(index)
-                }
-            }
-            .tabViewStyle(.page(indexDisplayMode: .never))
         }
-        .sensoryFeedback(.selection, trigger: offset)
     }
 
     private func month(_ index: Int) -> Date {
@@ -44,11 +44,7 @@ struct MoStatsView: View {
             withAnimation(.snappy) { offset = min(Self.range.upperBound, max(Self.range.lowerBound, offset + step)) }
         } label: {
             Image(systemName: icon)
-                .font(.system(size: 16, weight: .semibold))
-                .frame(width: 40, height: 40)
         }
-        .buttonStyle(.glass)
-        .buttonBorderShape(.circle)
     }
 }
 

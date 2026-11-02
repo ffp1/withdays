@@ -11,7 +11,7 @@ enum MoKind: String, Codable, CaseIterable {
 
 struct MoCategory: Codable, Equatable, Hashable, Identifiable {
     var label: String
-    /// An icon asset name under MoIcons.
+    /// An SF Symbol name.
     var icon: String
 
     var id: String { label }
@@ -37,16 +37,16 @@ struct MoState: Codable, Equatable {
         switch kind {
         case .expense:
             [
-                MoCategory(label: "食事", icon: "mo-meal"),
-                MoCategory(label: "日用品", icon: "mo-daily"),
-                MoCategory(label: "趣味", icon: "mo-hobby"),
-                MoCategory(label: "その他", icon: "more"),
+                MoCategory(label: "食事", icon: "fork.knife"),
+                MoCategory(label: "日用品", icon: "basket"),
+                MoCategory(label: "趣味", icon: "face.smiling"),
+                MoCategory(label: "その他", icon: "ellipsis"),
             ]
         case .income:
             [
-                MoCategory(label: "給与", icon: "mo-salary"),
-                MoCategory(label: "臨時収入", icon: "mo-bonus"),
-                MoCategory(label: "その他", icon: "more"),
+                MoCategory(label: "給与", icon: "banknote"),
+                MoCategory(label: "臨時収入", icon: "gift"),
+                MoCategory(label: "その他", icon: "ellipsis"),
             ]
         }
     }
@@ -75,20 +75,82 @@ enum MoData {
     static func newID() -> String {
         "record-\(UUID().uuidString)"
     }
+}
 
-    /// The category icons to choose from, by asset name (searchable in English).
-    static let icons = [
-        "airplane", "armchair", "atom", "baby", "ball", "bank", "bed", "beer", "book-open", "book", "bot", "cake",
-        "camera", "candy", "car", "carrot", "cat", "coffee", "coin", "cookie", "credit-card", "diamond", "dices", "dog",
-        "dome", "dumbbell", "earth", "education", "electronicity", "face", "fire", "fish", "flower", "footprints",
-        "gamepad", "gasoline", "gift", "glasses", "group", "guitar", "hamburger", "hand-coins", "handbag", "headphones",
-        "health", "heart", "hospital", "hotel", "house", "juice", "laptop", "library", "martini", "medical-bag", "mic",
-        "microwave", "mirror", "money", "monitor", "more", "motorbike", "movie", "music", "pair", "parking", "pen",
-        "phone", "piano", "piggy-bank", "pill", "present", "question", "raidio", "roller-coaster", "school", "scissors",
-        "shirt", "shopping-bag", "shopping-cart", "sightseeing", "smartphone", "smoking", "soap", "star", "store",
-        "ticket", "toilet", "toothbrush", "towel", "track", "train", "trash", "utensils", "video", "wallet",
-        "washing-machine", "watch", "water", "wi-fi", "wine", "yen",
+/// The category icons to choose from: SF Symbols in groups. The search matches the group or the symbol name.
+enum MoIcons {
+    struct Group: Identifiable {
+        let title: String
+        let symbols: [String]
+        var id: String { title }
+    }
+
+    static let groups: [Group] = [
+        Group(title: "食事", symbols: [
+            "fork.knife", "cup.and.saucer", "mug", "takeoutbag.and.cup.and.straw", "wineglass", "birthday.cake",
+            "carrot", "fish", "frying.pan", "popcorn", "waterbottle", "leaf",
+        ]),
+        Group(title: "買い物", symbols: [
+            "basket", "cart", "bag", "handbag", "gift", "giftcard", "shippingbox", "tag", "storefront", "barcode",
+        ]),
+        Group(title: "交通", symbols: [
+            "tram", "train.side.front.car", "bus", "car", "airplane", "bicycle", "scooter", "ferry", "fuelpump",
+            "parkingsign", "figure.walk", "suitcase",
+        ]),
+        Group(title: "住まい", symbols: [
+            "house", "building.2", "bed.double", "sofa", "lamp.desk", "washer", "refrigerator", "lightbulb", "bolt",
+            "drop", "flame", "wifi", "wrench.and.screwdriver", "hammer", "trash",
+        ]),
+        Group(title: "通信・家電", symbols: [
+            "iphone", "phone", "laptopcomputer", "desktopcomputer", "tv", "headphones", "camera", "printer",
+            "gamecontroller", "applewatch",
+        ]),
+        Group(title: "健康・美容", symbols: [
+            "cross.case", "pills", "stethoscope", "bandage", "heart", "dumbbell", "figure.run", "scissors", "comb",
+            "shower", "sparkles", "eyeglasses",
+        ]),
+        Group(title: "衣服", symbols: ["tshirt", "shoe", "crown", "backpack", "umbrella"]),
+        Group(title: "趣味・娯楽", symbols: [
+            "face.smiling", "music.note", "film", "theatermasks", "ticket", "book", "books.vertical", "newspaper",
+            "paintpalette", "guitars", "pianokeys", "puzzlepiece", "dice", "photo", "tennisball", "soccerball",
+            "basketball", "binoculars", "beach.umbrella", "tent", "mountain.2", "globe.asia.australia", "map",
+        ]),
+        Group(title: "学び・仕事", symbols: [
+            "graduationcap", "pencil", "studentdesk", "doc.text", "envelope", "briefcase", "calendar", "clock",
+        ]),
+        Group(title: "人・ペット", symbols: [
+            "person", "person.2", "figure.and.child.holdinghands", "heart.circle", "pawprint", "dog", "cat", "bird",
+            "tortoise",
+        ]),
+        Group(title: "お金", symbols: [
+            "yensign", "yensign.circle", "banknote", "creditcard", "wallet.bifold", "building.columns",
+            "chart.line.uptrend.xyaxis", "percent", "dollarsign.circle", "bitcoinsign.circle", "hand.thumbsup",
+        ]),
+        Group(title: "その他", symbols: [
+            "ellipsis", "star", "flag", "bell", "gearshape", "sun.max", "snowflake", "cloud.rain", "smoke",
+            "questionmark",
+        ]),
     ]
+
+    /// Groups trimmed to the symbols this system has, and to the search.
+    static func filtered(_ query: String) -> [Group] {
+        let text = query.trimmingCharacters(in: .whitespaces).lowercased()
+        return groups.compactMap { group in
+            let available = group.symbols.filter { UIImage(systemName: $0) != nil }
+            let matching = text.isEmpty || group.title.contains(text) ? available : available.filter { $0.contains(text) }
+            return matching.isEmpty ? nil : Group(title: group.title, symbols: matching)
+        }
+    }
+
+    /// Names from the first build (a bundled icon set) map to symbols; anything unknown shows a tag.
+    static func resolve(_ name: String) -> String {
+        if UIImage(systemName: name) != nil { return name }
+        let legacy = [
+            "mo-meal": "fork.knife", "mo-daily": "basket", "mo-hobby": "face.smiling", "more": "ellipsis",
+            "mo-salary": "banknote", "mo-bonus": "gift",
+        ]
+        return legacy[name] ?? "tag"
+    }
 }
 
 extension Color {
@@ -96,16 +158,14 @@ extension Color {
     static let moIncome = Color(uiColor: UIColor(light: 0x16A34A, dark: 0x31C463))
 }
 
-/// A category icon from the bundled set.
+/// A category icon.
 struct MoIcon: View {
     let name: String
     var size: CGFloat = 24
 
     var body: some View {
-        Image("MoIcons/\(name)")
-            .renderingMode(.template)
-            .resizable()
-            .scaledToFit()
+        Image(systemName: MoIcons.resolve(name))
+            .font(.system(size: size * 0.85, weight: .medium))
             .frame(width: size, height: size)
     }
 }
@@ -123,8 +183,8 @@ enum MoFormat {
         formatter.string(from: NSNumber(value: value)) ?? "\(value)"
     }
 
-    /// The rounded font of the web app, for amounts and the keypad.
+    /// Rounded system digits for amounts and the keypad.
     static func number(_ size: CGFloat, weight: Font.Weight = .semibold) -> Font {
-        .custom("Baloo Bhai 2", size: size).weight(weight)
+        .system(size: size, weight: weight, design: .rounded)
     }
 }
