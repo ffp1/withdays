@@ -119,13 +119,19 @@ struct HomeView: View {
         }
     }
 
-    var body: some View {
+    /// The layers over the navigation stack: the template tray, the toast and the ＋ menu.
+    private var layered: some View {
         navigation
             .overlay(alignment: .bottom) { trayLayer }
             .overlay(alignment: .bottom) { toastLayer }
             .overlay { fabMenuLayer }
-            .sensoryFeedback(.impact(weight: .medium), trigger: fabMenuShown) { _, new in new }
-            .sensoryFeedback(.selection, trigger: fabHover) { _, new in new != nil }
+            .sensoryFeedback(.impact(weight: .medium), trigger: fabMenuShown) { (_: Bool, new: Bool) in new }
+            .sensoryFeedback(.selection, trigger: fabHover) { (_: HomeMode?, new: HomeMode?) in new != nil }
+    }
+
+    /// The calendar's sheets: month picker, editor and event detail.
+    private var withSheets: some View {
+        layered
             .sheet(isPresented: $showMonthPicker) {
                 MonthPickerSheet(selected: displayedMonth) { jump(to: $0) }
                     .presentationDetents([.medium])
@@ -141,6 +147,10 @@ struct HomeView: View {
             }) { ref in
                 EventDetailSheet(event: ref.event) { kind in startRelocation(ref.event, kind) }
             }
+    }
+
+    var body: some View {
+        withSheets
             .sensoryFeedback(.impact(weight: .medium), trigger: detail?.id) { _, new in new != nil }
             .sensoryFeedback(.impact(weight: .medium), trigger: showTemplates) { _, new in new }
             .sensoryFeedback(.impact(weight: .heavy), trigger: todayPulse)
