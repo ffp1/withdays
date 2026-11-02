@@ -534,7 +534,7 @@ struct HomeView: View {
                         Image(systemName: "plus")
                             .font(.system(size: 26.4, weight: .semibold))
                             .foregroundStyle(.white)
-                            .rotationEffect(.degrees(45 * (fabMenuShown ? 1 : fabPress)))
+                            .rotationEffect(.degrees(fabMenuShown ? 45 : 45 * Double(fabPress)))
                             .frame(width: 56, height: 56)
                     }
                     .buttonStyle(.glassProminent)
