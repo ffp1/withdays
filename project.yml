@@ -7,7 +7,7 @@ options:
 
 settings:
   base:
-    MARKETING_VERSION: "1.3.2"
+    MARKETING_VERSION: "1.4.0"
     CURRENT_PROJECT_VERSION: "1"
     SWIFT_VERSION: "5.0"
 
@@ -35,6 +35,8 @@ targets:
         NSRemindersFullAccessUsageDescription: ToDoとしてAppleのリマインダーを表示・追加・編集するために使います。
         NSRemindersUsageDescription: ToDoとしてAppleのリマインダーを表示・追加・編集するために使います。
         NSLocationWhenInUseUsageDescription: Goで最寄り駅から電車の時刻を調べるために使います。
+        UIAppFonts:
+          - BalooBhai2.ttf
         CFBundleURLTypes:
           - CFBundleURLName: com.ffuime.withdays
             CFBundleURLSchemes:

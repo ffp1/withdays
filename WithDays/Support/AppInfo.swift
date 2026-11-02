@@ -23,6 +23,10 @@ enum AppInfo {
 
     /// Newest first. Add an entry here with each release.
     static let changelog: [Release] = [
+        Release(version: "1.4.0", date: "2026.11.03", notes: [
+            "Mo：家計簿（入力・統計・カレンダー）",
+            "＋ボタン長押しでMo / Goを選んで開く",
+        ]),
         Release(version: "1.3.2", date: "2026.11.02", notes: [
             "カレンダーの編集（右スワイプ）",
             "Go：長押しでプリセット、上下スワイプで画面の明るさ",

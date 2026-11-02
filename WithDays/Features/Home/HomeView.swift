@@ -6,7 +6,7 @@ enum HomeRoute: Hashable {
 }
 
 enum HomeMode: String {
-    case calendar, todo, go
+    case calendar, todo, go, mo
 }
 
 struct HomeView: View {
@@ -26,7 +26,11 @@ struct HomeView: View {
     @State private var dayPager = PagerModel<Date>()
     /// Set when a double tap lands while an event sheet is opening: close it, then open a new event.
     @State private var newEventAfterDetail = false
-    @State private var goLongPressed = false
+    /// Holding ＋ floats the Mo / Go menu; sliding onto one and letting go opens it.
+    @State private var fabMenuShown = false
+    @State private var fabHover: HomeMode?
+    @State private var fabMenuFrames: [HomeMode: CGRect] = [:]
+    @State private var fabLongPressed = false
     /// During a long jump the neighbouring page temporarily shows the target month, so the scroll covers one page.
     @State private var pageMonths: [Int: Int] = [:]
     @State private var selectedDate: Date
@@ -54,6 +58,7 @@ struct HomeView: View {
 
     private var isTodo: Bool { mode == HomeMode.todo.rawValue }
     private var isGo: Bool { mode == HomeMode.go.rawValue }
+    private var isMo: Bool { mode == HomeMode.mo.rawValue }
 
     private var displayedMonth: Date {
         let id = page ?? 0
@@ -63,7 +68,12 @@ struct HomeView: View {
     var body: some View {
         NavigationStack(path: $path) {
             ZStack {
-                if isGo {
+                if isMo {
+                    MoView {
+                        withAnimation(.snappy) { mode = HomeMode.calendar.rawValue }
+                    }
+                    .transition(.move(edge: .bottom).combined(with: .opacity))
+                } else if isGo {
                     GoView {
                         withAnimation(.snappy) { mode = HomeMode.calendar.rawValue }
                     }
@@ -85,6 +95,8 @@ struct HomeView: View {
             .animation(.snappy(duration: 0.35), value: mode)
             .onChange(of: mode) { _, new in UserDefaults.standard.set(new, forKey: SettingsKey.homeMode) }
             .toolbar { toolbar }
+            // Mo has its own headers and tab bar.
+            .toolbar(isMo ? .hidden : .visible, for: .navigationBar)
             .navigationBarTitleDisplayMode(.inline)
             .navigationDestination(for: HomeRoute.self) { route in
                 switch route {
@@ -101,8 +113,9 @@ struct HomeView: View {
         }
         .overlay(alignment: .bottom) { trayLayer }
         .overlay(alignment: .bottom) { toastLayer }
-        .sensoryFeedback(.impact(weight: .medium), trigger: isGo) { _, new in new }
-        .onChange(of: isGo) { _, shown in if !shown { goLongPressed = false } }
+        .overlay { fabMenuLayer }
+        .sensoryFeedback(.impact(weight: .medium), trigger: fabMenuShown) { _, new in new }
+        .sensoryFeedback(.selection, trigger: fabHover) { _, new in new != nil }
         .sheet(isPresented: $showMonthPicker) {
             MonthPickerSheet(selected: displayedMonth) { jump(to: $0) }
                 .presentationDetents([.medium])
@@ -184,22 +197,40 @@ struct HomeView: View {
                 circleButton(relocation != nil ? "checkmark" : "plus", prominent: true) {
                     if relocation != nil {
                         confirmRelocation()
-                    } else if goLongPressed {
-                        // The long press already went to Go; the release must not also add an event.
-                        goLongPressed = false
+                    } else if fabLongPressed {
+                        // The long press opened the menu; the release must not also add an event.
+                        fabLongPressed = false
                     } else {
                         openEditor(.new)
                     }
                 }
                 .disabled(relocation?.targets.isEmpty ?? false)
-                // Holding ＋ goes to Go.
+                // Holding ＋ floats Mo / Go above it; slide onto one and let go to open it.
                 .simultaneousGesture(
-                    LongPressGesture(minimumDuration: 0.5).onEnded { _ in
-                        guard relocation == nil else { return }
-                        goLongPressed = true
-                        closeTray()
-                        withAnimation(.snappy(duration: 0.35)) { mode = HomeMode.go.rawValue }
-                    }
+                    LongPressGesture(minimumDuration: 0.5)
+                        .sequenced(before: DragGesture(minimumDistance: 0, coordinateSpace: .global))
+                        .onChanged { value in
+                            guard relocation == nil, case .second(true, let drag) = value else { return }
+                            if !fabMenuShown {
+                                fabLongPressed = true
+                                closeTray()
+                                withAnimation(.spring(response: 0.35, dampingFraction: 0.75)) { fabMenuShown = true }
+                            }
+                            if let drag { fabHover = fabMenuItem(at: drag.location) }
+                        }
+                        .onEnded { _ in
+                            guard fabMenuShown else { return }
+                            let target = fabHover
+                            withAnimation(.snappy(duration: 0.25)) {
+                                fabMenuShown = false
+                                fabHover = nil
+                            }
+                            if let target {
+                                withAnimation(.snappy(duration: 0.35)) { mode = target.rawValue }
+                            }
+                            // The button may or may not see the release; don't let the flag eat a later tap.
+                            DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { fabLongPressed = false }
+                        }
                 )
             }
             .padding(20)
@@ -425,12 +456,66 @@ struct HomeView: View {
     /// The undo toast sits between the bottom buttons (above the bar in ToDo) and leaves the screen usable.
     @ViewBuilder
     private var toastLayer: some View {
-        if let toast = toasts.current {
+        // Mo shows the toast above its own tab bar.
+        if let toast = toasts.current, !isMo {
             UndoToastView(toast: toast) { toasts.performUndo() }
                 .padding(.horizontal, isTodo ? 20 : 20 + 56 + 10)
                 .padding(.bottom, isTodo ? 20 + 56 + 12 : 20)
                 .id(toast.id)
         }
+    }
+
+    /// The menu over a dimmed, blurred screen: Go on top, Mo just above ＋ (a copy of it, drawn over the blur).
+    @ViewBuilder
+    private var fabMenuLayer: some View {
+        if fabMenuShown {
+            ZStack(alignment: .bottomTrailing) {
+                Rectangle()
+                    .fill(.ultraThinMaterial)
+                    .overlay(Color.black.opacity(0.3))
+                    .ignoresSafeArea()
+                    .transition(.opacity)
+                VStack(alignment: .trailing, spacing: 14) {
+                    fabMenuRow(.go, name: "Go", logo: "GoLogo")
+                    fabMenuRow(.mo, name: "Mo", logo: "MoLogo")
+                    Image(systemName: "plus")
+                        .font(.system(size: 26.4, weight: .semibold))
+                        .foregroundStyle(.white)
+                        .frame(width: 56, height: 56)
+                        .glassEffect(.regular.tint(.brand), in: .circle)
+                }
+                .padding(20)
+                .transition(.offset(y: 30).combined(with: .opacity))
+            }
+            .allowsHitTesting(false)
+        }
+    }
+
+    private func fabMenuRow(_ target: HomeMode, name: String, logo: String) -> some View {
+        let hovered = fabHover == target
+        return HStack(spacing: 14) {
+            Text(name)
+                .font(.system(size: 22, weight: .regular))
+                .foregroundStyle(.white)
+            Image(logo)
+                .renderingMode(.template)
+                .resizable()
+                .scaledToFit()
+                .frame(width: 30, height: 30)
+                .foregroundStyle(hovered ? Color.white : Color.brand)
+                .frame(width: 56, height: 56)
+                .glassEffect(hovered ? .regular.tint(.brand) : .regular, in: .circle)
+        }
+        .scaleEffect(hovered ? 1.12 : 1, anchor: .trailing)
+        .animation(.spring(response: 0.25, dampingFraction: 0.7), value: hovered)
+        .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { fabMenuFrames[target] = $0 }
+    }
+
+    /// Which row the finger is on: its height, from a little left of its name to the screen's edge.
+    private func fabMenuItem(at point: CGPoint) -> HomeMode? {
+        fabMenuFrames.first { _, frame in
+            point.y >= frame.minY - 7 && point.y <= frame.maxY + 7 && point.x >= frame.minX - 40
+        }?.key
     }
 
     // MARK: Actions
