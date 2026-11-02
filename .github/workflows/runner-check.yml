@@ -1,0 +1,13 @@
+name: Runner check
+
+# Temporary: tells whether Actions runs at all while the macOS builds sit in the queue.
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo "Actions runs on ubuntu-latest"
