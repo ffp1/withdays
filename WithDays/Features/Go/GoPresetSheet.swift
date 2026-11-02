@@ -14,6 +14,9 @@ enum GoEditTarget: Identifiable {
 
 /// The presets: tap to use one, swipe left to delete (with undo), swipe right to edit, ＋ to add.
 struct GoPresetSheet: View {
+    /// The top-right button: back to the calendar.
+    var onCalendar: () -> Void
+
     @Environment(GoStore.self) private var go
     @Environment(ToastCenter.self) private var toasts
     @Environment(\.dismiss) private var dismiss
@@ -67,6 +70,14 @@ struct GoPresetSheet: View {
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) {
                     Button { dismiss() } label: { Image(systemName: "xmark") }
+                }
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button {
+                        dismiss()
+                        onCalendar()
+                    } label: {
+                        Image(systemName: "calendar")
+                    }
                 }
             }
             .overlay(alignment: .bottom) {

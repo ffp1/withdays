@@ -27,7 +27,6 @@ struct HomeView: View {
     /// Set when a double tap lands while an event sheet is opening: close it, then open a new event.
     @State private var newEventAfterDetail = false
     @State private var goLongPressed = false
-    @State private var goShowPresets = false
     /// During a long jump the neighbouring page temporarily shows the target month, so the scroll covers one page.
     @State private var pageMonths: [Int: Int] = [:]
     @State private var selectedDate: Date
@@ -65,7 +64,9 @@ struct HomeView: View {
         NavigationStack(path: $path) {
             ZStack {
                 if isGo {
-                    GoView(showPresets: $goShowPresets)
+                    GoView {
+                        withAnimation(.snappy) { mode = HomeMode.calendar.rawValue }
+                    }
                         .transition(.move(edge: .bottom).combined(with: .opacity))
                 } else if isTodo {
                     TodoView()
@@ -250,17 +251,14 @@ struct HomeView: View {
     @ToolbarContentBuilder
     private var toolbar: some ToolbarContent {
         ToolbarItem(placement: .topBarLeading) {
-            if isGo {
-                Button { goShowPresets = true } label: {
-                    Image(systemName: "list.bullet")
-                }
-            } else if isTodo {
+            // Go keeps a clean screen; its calendar button is in the presets sheet.
+            if isTodo {
                 Text("ToDo")
                     .font(.system(size: 20, weight: .bold))
                     .foregroundStyle(Color.brand)
                     .fixedSize()
                     .transition(.blurReplace)
-            } else {
+            } else if !isGo {
                 Button {
                     showMonthPicker = true
                 } label: {
@@ -278,26 +276,25 @@ struct HomeView: View {
                 }
             }
         }
-        // Go's presets button sits in glass like the right side; the calendar and ToDo titles don't.
-        .sharedBackgroundVisibility(isGo ? .visible : .hidden)
+        .sharedBackgroundVisibility(.hidden)
 
         ToolbarItemGroup(placement: .topBarTrailing) {
-            Button {
-                withAnimation(.snappy) {
-                    closeTray()
-                    relocation = nil
-                    mode = isTodo || isGo ? HomeMode.calendar.rawValue : HomeMode.todo.rawValue
-                }
-            } label: {
-                Image(systemName: isTodo || isGo ? "calendar" : "checkmark.circle")
-                    .contentTransition(.symbolEffect(.replace))
-            }
-            if !isTodo, !isGo {
-                NavigationLink(value: HomeRoute.search) {
-                    Image(systemName: "magnifyingglass")
-                }
-            }
             if !isGo {
+                Button {
+                    withAnimation(.snappy) {
+                        closeTray()
+                        relocation = nil
+                        mode = isTodo ? HomeMode.calendar.rawValue : HomeMode.todo.rawValue
+                    }
+                } label: {
+                    Image(systemName: isTodo ? "calendar" : "checkmark.circle")
+                        .contentTransition(.symbolEffect(.replace))
+                }
+                if !isTodo {
+                    NavigationLink(value: HomeRoute.search) {
+                        Image(systemName: "magnifyingglass")
+                    }
+                }
                 NavigationLink(value: HomeRoute.settings) {
                     Image(systemName: "gearshape")
                 }

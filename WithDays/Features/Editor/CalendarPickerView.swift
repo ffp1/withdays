@@ -1,13 +1,15 @@
 import EventKit
 import SwiftUI
 
-/// Every writable calendar; picking one (even the current one) goes straight back. Swipe left to delete.
+/// Every writable calendar; picking one (even the current one) goes straight back.
+/// Swipe right to edit, left to delete.
 struct CalendarPickerView: View {
     let selectedID: String?
     var onPick: (String) -> Void
 
     @Environment(CalendarStore.self) private var store
     @State private var pendingDelete: EKCalendar?
+    @State private var editing: EKCalendar?
     @State private var errorMessage: String?
 
     var body: some View {
@@ -29,6 +31,7 @@ struct CalendarPickerView: View {
                             }
                             .contentShape(Rectangle())
                         }
+                        .calendarEditSwipe(calendar, editing: $editing)
                         .swipeActions(edge: .trailing) {
                             if store.canDelete(calendar) {
                                 Button(role: .destructive) { pendingDelete = calendar } label: {
@@ -49,15 +52,60 @@ struct CalendarPickerView: View {
         }
         .navigationTitle("カレンダー")
         .navigationBarTitleDisplayMode(.inline)
+        .calendarEditSheet($editing)
         .calendarDeleteDialog($pendingDelete, errorMessage: $errorMessage)
         .errorAlert($errorMessage)
     }
 }
 
 extension View {
+    /// Swipe right on a calendar row to edit it.
+    func calendarEditSwipe(_ calendar: EKCalendar, editing: Binding<EKCalendar?>) -> some View {
+        modifier(CalendarEditSwipe(calendar: calendar, editing: editing))
+    }
+
+    /// The edit form for the calendar swiped.
+    func calendarEditSheet(_ calendar: Binding<EKCalendar?>) -> some View {
+        sheet(item: Binding(
+            get: { calendar.wrappedValue.map(EditedCalendar.init) },
+            set: { calendar.wrappedValue = $0?.calendar }
+        )) { item in
+            NavigationStack {
+                NewCalendarView(editing: item.calendar) { _ in calendar.wrappedValue = nil }
+                    .toolbar {
+                        ToolbarItem(placement: .cancellationAction) {
+                            Button { calendar.wrappedValue = nil } label: { Image(systemName: "xmark") }
+                        }
+                    }
+            }
+        }
+    }
+
     /// Asks before deleting a calendar, because its events go with it.
     func calendarDeleteDialog(_ calendar: Binding<EKCalendar?>, errorMessage: Binding<String?>) -> some View {
         modifier(CalendarDeleteDialog(calendar: calendar, errorMessage: errorMessage))
+    }
+}
+
+private struct EditedCalendar: Identifiable {
+    let calendar: EKCalendar
+    var id: String { calendar.calendarIdentifier }
+}
+
+private struct CalendarEditSwipe: ViewModifier {
+    let calendar: EKCalendar
+    @Binding var editing: EKCalendar?
+    @Environment(CalendarStore.self) private var store
+
+    func body(content: Content) -> some View {
+        content.swipeActions(edge: .leading) {
+            if store.canEdit(calendar) {
+                Button { editing = calendar } label: {
+                    Image(systemName: "pencil.and.outline")
+                }
+                .tint(.brand)
+            }
+        }
     }
 }
 
@@ -80,7 +128,9 @@ private struct CalendarDeleteDialog: ViewModifier {
     }
 }
 
+/// Adds a calendar, or with `editing` changes one's name and color.
 struct NewCalendarView: View {
+    var editing: EKCalendar? = nil
     var onCreated: (String) -> Void
 
     @Environment(CalendarStore.self) private var store
@@ -88,6 +138,15 @@ struct NewCalendarView: View {
     @State private var color = ColorChoice()
     @State private var errorMessage: String?
     @FocusState private var titleFocused: Bool
+
+    init(editing: EKCalendar? = nil, onCreated: @escaping (String) -> Void) {
+        self.editing = editing
+        self.onCreated = onCreated
+        if let editing {
+            _title = State(initialValue: editing.title)
+            _color = State(initialValue: ColorChoice(color: UIColor(cgColor: editing.cgColor)))
+        }
+    }
 
     var body: some View {
         Form {
@@ -100,7 +159,7 @@ struct NewCalendarView: View {
                 ColorGrid(choice: $color)
             }
         }
-        .navigationTitle("カレンダーを追加")
+        .navigationTitle(editing == nil ? "カレンダーを追加" : "カレンダーを編集")
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
             ToolbarItem(placement: .confirmationAction) {
@@ -117,6 +176,11 @@ struct NewCalendarView: View {
         let name = title.trimmingCharacters(in: .whitespaces)
         guard !name.isEmpty else { return }
         do {
+            if let editing {
+                try store.updateCalendar(editing, title: name, color: color.uiColor)
+                onCreated(editing.calendarIdentifier)
+                return
+            }
             let calendar = try store.createCalendar(title: name, color: color.uiColor)
             onCreated(calendar.calendarIdentifier)
         } catch {

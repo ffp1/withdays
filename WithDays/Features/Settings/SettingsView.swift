@@ -97,10 +97,11 @@ struct SettingsView: View {
     }
 }
 
-/// Show/hide, add and delete (swipe left) calendars.
+/// Show/hide, add, edit (swipe right) and delete (swipe left) calendars.
 private struct CalendarSettingsView: View {
     @Environment(CalendarStore.self) private var store
     @State private var adding = false
+    @State private var editing: EKCalendar?
     @State private var pendingDelete: EKCalendar?
     @State private var errorMessage: String?
 
@@ -115,6 +116,7 @@ private struct CalendarSettingsView: View {
                                 Text(calendar.title)
                             }
                         }
+                        .calendarEditSwipe(calendar, editing: $editing)
                         .swipeActions(edge: .trailing) {
                             if store.canDelete(calendar) {
                                 Button(role: .destructive) { pendingDelete = calendar } label: {
@@ -145,6 +147,7 @@ private struct CalendarSettingsView: View {
                     }
             }
         }
+        .calendarEditSheet($editing)
         .calendarDeleteDialog($pendingDelete, errorMessage: $errorMessage)
         .errorAlert($errorMessage)
     }

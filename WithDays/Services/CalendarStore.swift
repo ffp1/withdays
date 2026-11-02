@@ -165,6 +165,18 @@ final class CalendarStore {
         reload()
     }
 
+    /// Calendars whose name and color can change (not subscriptions or birthdays).
+    func canEdit(_ calendar: EKCalendar) -> Bool {
+        !calendar.isImmutable && calendar.type != .subscription && calendar.type != .birthday
+    }
+
+    func updateCalendar(_ calendar: EKCalendar, title: String, color: UIColor) throws {
+        calendar.title = title
+        calendar.cgColor = color.cgColor
+        try eventStore.saveCalendar(calendar, commit: true)
+        reload()
+    }
+
     func createCalendar(title: String, color: UIColor) throws -> EKCalendar {
         let calendar = EKCalendar(for: .event, eventStore: eventStore)
         calendar.title = title

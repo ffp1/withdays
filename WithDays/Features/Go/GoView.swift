@@ -1,12 +1,15 @@
 import SwiftUI
 
 /// Go: the next target time of the selected preset and how long is left, centred on the screen.
-/// Swipe up anywhere (or tap the target) for the presets. The navigation bar's button goes back to the calendar.
+/// Hold anywhere for the presets (whose top-right button goes back to the calendar); swipe up or down for brightness.
 struct GoView: View {
-    /// Also opened from the navigation bar's top-left button.
-    @Binding var showPresets: Bool
+    var onCalendar: () -> Void
 
     @Environment(GoStore.self) private var go
+    @State private var showPresets = false
+    /// The brightness when the swipe began, and what it is now (shown while swiping).
+    @State private var brightnessStart: CGFloat?
+    @State private var brightness: CGFloat = 0
 
     var body: some View {
         TimelineView(.periodic(from: .now, by: 0.25)) { context in
@@ -15,14 +18,41 @@ struct GoView: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(Color(.systemBackground))
         .contentShape(Rectangle())
-        .gesture(
-            DragGesture(minimumDistance: 20).onEnded { value in
-                guard value.translation.height < -60, abs(value.translation.height) > abs(value.translation.width) else { return }
-                showPresets = true
+        .overlay(alignment: .top) {
+            if brightnessStart != nil {
+                Label("\(Int((brightness * 100).rounded()))%", systemImage: "sun.max.fill")
+                    .font(.system(size: 15, weight: .semibold))
+                    .monospacedDigit()
+                    .foregroundStyle(Self.goBlue)
+                    .padding(.horizontal, 16)
+                    .padding(.vertical, 8)
+                    .glassEffect(.regular, in: .capsule)
+                    .padding(.top, 8)
+                    .transition(.opacity.combined(with: .scale(scale: 0.9)))
             }
+        }
+        .animation(.snappy, value: brightnessStart == nil)
+        .gesture(
+            DragGesture(minimumDistance: 12)
+                .onChanged { value in
+                    guard let screen = Self.screen else { return }
+                    if brightnessStart == nil {
+                        // Vertical swipes only; sideways ones are left alone.
+                        guard abs(value.translation.height) > abs(value.translation.width) else { return }
+                        brightnessStart = screen.brightness
+                    }
+                    // A swipe across about half the screen goes from dark to bright.
+                    let level = min(1, max(0, (brightnessStart ?? 0) - value.translation.height / 400))
+                    screen.brightness = level
+                    brightness = level
+                }
+                .onEnded { _ in brightnessStart = nil }
+        )
+        .simultaneousGesture(
+            LongPressGesture(minimumDuration: 0.5).onEnded { _ in showPresets = true }
         )
         .sheet(isPresented: $showPresets) {
-            GoPresetSheet()
+            GoPresetSheet(onCalendar: onCalendar)
                 .presentationDetents([.large])
                 .presentationDragIndicator(.visible)
         }
@@ -50,7 +80,6 @@ struct GoView: View {
                     .monospacedDigit()
                     .foregroundStyle(Self.targetGrey)
                     .contentTransition(.numericText())
-                    .onTapGesture { showPresets = true }
                 if seconds >= 3600 {
                     // An hour or more to go: a clock instead of the countdown, as on the web.
                     Image(systemName: "clock.arrow.circlepath")
@@ -69,8 +98,11 @@ struct GoView: View {
             Text("プリセットがありません")
                 .font(.system(size: 17, weight: .light))
                 .foregroundStyle(Self.targetGrey)
-                .onTapGesture { showPresets = true }
         }
+    }
+
+    private static var screen: UIScreen? {
+        UIApplication.shared.connectedScenes.compactMap { ($0 as? UIWindowScene)?.screen }.first
     }
 
     /// #27a and #aaa from the web app.
