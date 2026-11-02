@@ -127,7 +127,7 @@ struct MoInputView: View {
             HStack(spacing: 12) {
                 ForEach(categories) { category in
                     MoCategoryTile(category: category, kind: kind, enabled: enabled) { tap(category) }
-                        .containerRelativeFrame(.horizontal, count: 7, span: 2, spacing: 12)
+                        .containerRelativeFrame(.horizontal, count: 21, span: 5, spacing: 12)
                 }
                 Button { categorySheet = .new } label: {
                     VStack(spacing: 6) {
@@ -145,12 +145,12 @@ struct MoInputView: View {
                     .foregroundStyle(.secondary)
                 }
                 .buttonStyle(.plain)
-                .containerRelativeFrame(.horizontal, count: 7, span: 2, spacing: 12)
+                .containerRelativeFrame(.horizontal, count: 21, span: 5, spacing: 12)
             }
             .padding(.vertical, 6)
             .scrollTargetLayout()
         }
-        // Three and a half circles across, so it shows there are more to the side.
+        // About 4.2 circles across, so it shows there are more to the side.
         .contentMargins(.horizontal, 16, for: .scrollContent)
         .scrollTargetBehavior(.viewAligned)
         .scrollIndicators(.hidden)
