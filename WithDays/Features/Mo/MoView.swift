@@ -29,6 +29,8 @@ struct MoView: View {
         }
         .animation(.snappy(duration: 0.25), value: tab)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+        // Typing a memo shows the keyboard over the screen instead of squeezing it.
+        .ignoresSafeArea(.keyboard, edges: .bottom)
         .safeAreaInset(edge: .bottom, spacing: 0) {
             VStack(spacing: 10) {
                 if let toast = toasts.current {
@@ -38,7 +40,9 @@ struct MoView: View {
                 }
                 MoTabBar(tab: $tab, color: kind.color, onCalendar: onCalendar)
             }
+            .ignoresSafeArea(.keyboard, edges: .bottom)
         }
+        .ignoresSafeArea(.keyboard, edges: .bottom)
     }
 }
 

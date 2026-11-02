@@ -87,25 +87,13 @@ final class MoStore {
         persist()
     }
 
-    /// Records in it stay as they are.
-    func deleteCategory(_ category: MoCategory, kind: MoKind) -> Int? {
-        var removedAt: Int?
-        mutateCategories(kind) { list in
-            removedAt = list.firstIndex(of: category)
-            if let removedAt { list.remove(at: removedAt) }
-        }
-        return removedAt
+    func moveCategories(_ kind: MoKind, from offsets: IndexSet, to destination: Int) {
+        mutateCategories(kind) { list in list.move(fromOffsets: offsets, toOffset: destination) }
     }
 
-    func restoreCategory(_ category: MoCategory, at index: Int, kind: MoKind) {
-        mutateCategories(kind) { list in list.insert(category, at: min(index, list.count)) }
-    }
-
-    func moveCategory(_ category: MoCategory, to target: MoCategory, kind: MoKind) {
-        mutateCategories(kind) { list in
-            guard let from = list.firstIndex(of: category), let to = list.firstIndex(of: target), from != to else { return }
-            list.move(fromOffsets: [from], toOffset: to > from ? to + 1 : to)
-        }
+    /// Records in them stay as they are.
+    func deleteCategories(_ kind: MoKind, at offsets: IndexSet) {
+        mutateCategories(kind) { list in list.remove(atOffsets: offsets) }
     }
 
     private func mutateCategories(_ kind: MoKind, _ change: (inout [MoCategory]) -> Void) {

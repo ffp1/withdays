@@ -86,12 +86,15 @@ struct MoCategorySheet: View {
                             LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 8), count: 6), spacing: 8) {
                                 ForEach(group.symbols, id: \.self) { item in
                                     Button { icon = item } label: {
-                                        Image(systemName: item)
-                                            .font(.system(size: 20, weight: .medium))
-                                            .foregroundStyle(icon == item ? Color.white : Color.primary)
-                                            .frame(maxWidth: .infinity)
+                                        // The circle fills the cell; the symbol sits in it.
+                                        Circle()
+                                            .fill(icon == item ? kind.color : Color.primary.opacity(0.05))
                                             .aspectRatio(1, contentMode: .fit)
-                                            .background(Circle().fill(icon == item ? kind.color : Color.primary.opacity(0.05)))
+                                            .overlay {
+                                                Image(systemName: item)
+                                                    .font(.system(size: 22, weight: .medium))
+                                                    .foregroundStyle(icon == item ? Color.white : Color.primary)
+                                            }
                                     }
                                     .buttonStyle(.plain)
                                 }
@@ -137,6 +140,63 @@ struct MoCategorySheet: View {
             mo.addCategory(category, to: kind)
         }
         dismiss()
+    }
+}
+
+/// The categories of one kind as a list: tap to edit, swipe left to delete, drag the handles to reorder.
+struct MoCategoryListSheet: View {
+    let kind: MoKind
+
+    @Environment(MoStore.self) private var mo
+    @Environment(\.dismiss) private var dismiss
+    @State private var editing: MoCategorySheet.Target?
+
+    var body: some View {
+        NavigationStack {
+            List {
+                ForEach(mo.categories(kind)) { category in
+                    Button { editing = .edit(category) } label: {
+                        HStack(spacing: 14) {
+                            Circle()
+                                .fill(kind.color.opacity(0.1))
+                                .frame(width: 40, height: 40)
+                                .overlay {
+                                    MoIcon(name: category.icon, size: 22)
+                                        .foregroundStyle(kind.color)
+                                }
+                            Text(category.label)
+                                .font(.system(size: 16, weight: .semibold))
+                                .foregroundStyle(.primary)
+                            Spacer()
+                        }
+                        .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                }
+                .onMove { from, to in mo.moveCategories(kind, from: from, to: to) }
+                .onDelete { offsets in mo.deleteCategories(kind, at: offsets) }
+
+                Button { editing = .new } label: {
+                    Label("カテゴリを追加", systemImage: "plus")
+                        .foregroundStyle(kind.color)
+                }
+            }
+            // Always in edit mode, so the handles are there to drag; rows still open on a tap.
+            .environment(\.editMode, .constant(.active))
+            .navigationTitle("\(kind.label)のカテゴリ")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .confirmationAction) {
+                    Button { dismiss() } label: { Image(systemName: "checkmark") }
+                        .buttonStyle(.glassProminent)
+                        .tint(kind.color)
+                }
+            }
+        }
+        .sheet(item: $editing) { target in
+            MoCategorySheet(target: target, kind: kind)
+                .presentationDetents([.large])
+        }
     }
 }
 

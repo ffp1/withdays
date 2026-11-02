@@ -1,7 +1,7 @@
 import SwiftUI
 
 /// Enter an amount on the keypad, then tap a category to record it (now).
-/// Holding a category edits them: tap to edit, × to delete, drag to reorder.
+/// Holding the categories opens their list to edit, delete and reorder them.
 struct MoInputView: View {
     @Binding var kind: MoKind
 
@@ -9,8 +9,8 @@ struct MoInputView: View {
     @Environment(ToastCenter.self) private var toasts
     @State private var digits = ""
     @State private var memo = ""
-    @State private var editing = false
     @State private var categorySheet: MoCategorySheet.Target?
+    @State private var showCategoryList = false
     @State private var shake = 0
     @State private var saved = 0
     @FocusState private var memoFocused: Bool
@@ -25,10 +25,10 @@ struct MoInputView: View {
                 .padding(.top, 12)
 
             amountView
-                .padding(.top, 16)
+                .padding(.top, 21)
 
             categoryStrip
-                .padding(.top, 14)
+                .padding(.top, 18)
 
             memoField
                 .padding(.horizontal, 20)
@@ -37,27 +37,22 @@ struct MoInputView: View {
             MoKeypad(onDigit: type, onDelete: deleteLast, onClear: { digits = "" })
                 .padding(.horizontal, 12)
                 .padding(.top, 6)
+                .padding(.bottom, 18)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         .contentShape(Rectangle())
-        .onTapGesture {
-            memoFocused = false
-            if editing { withAnimation(.snappy) { editing = false } }
-        }
+        .onTapGesture { memoFocused = false }
         .sensoryFeedback(.success, trigger: saved)
-        // While editing categories, the bar offers 完了.
-        .toolbar {
-            if editing {
-                ToolbarItem(placement: .topBarTrailing) {
-                    Button("完了") { withAnimation(.snappy) { editing = false } }
-                        .fontWeight(.bold)
-                }
-            }
-        }
         .sensoryFeedback(.error, trigger: shake)
+        .sensoryFeedback(.impact(weight: .medium), trigger: showCategoryList) { _, new in new }
         .sheet(item: $categorySheet) { target in
             MoCategorySheet(target: target, kind: kind)
                 .presentationDetents([.large])
+                .presentationDragIndicator(.visible)
+        }
+        .sheet(isPresented: $showCategoryList) {
+            MoCategoryListSheet(kind: kind)
+                .presentationDetents([.medium, .large])
                 .presentationDragIndicator(.visible)
         }
     }
@@ -68,10 +63,7 @@ struct MoInputView: View {
         HStack(spacing: 10) {
             ForEach(MoKind.allCases, id: \.self) { item in
                 Button {
-                    withAnimation(.snappy) {
-                        kind = item
-                        editing = false
-                    }
+                    withAnimation(.snappy) { kind = item }
                 } label: {
                     Label(item.label, systemImage: item == .expense ? "arrow.up" : "arrow.down")
                         .font(.system(size: 15, weight: .bold))
@@ -130,38 +122,22 @@ struct MoInputView: View {
 
     private var categoryStrip: some View {
         let categories = mo.categories(kind)
-        let enabled = !digits.isEmpty || editing
+        let enabled = !digits.isEmpty
         return ScrollView(.horizontal) {
-            HStack(spacing: 10) {
+            HStack(spacing: 12) {
                 ForEach(categories) { category in
-                    MoCategoryTile(
-                        category: category,
-                        kind: kind,
-                        enabled: enabled,
-                        editing: editing,
-                        onTap: { tap(category) },
-                        onLongPress: {
-                            memoFocused = false
-                            withAnimation(.snappy) { editing = true }
-                        },
-                        onDelete: { delete(category) },
-                        onMove: { label in
-                            guard let dragged = categories.first(where: { $0.label == label }) else { return }
-                            withAnimation(.snappy) { mo.moveCategory(dragged, to: category, kind: kind) }
-                        }
-                    )
-                    .containerRelativeFrame(.horizontal, count: 9, span: 2, spacing: 10)
+                    MoCategoryTile(category: category, kind: kind, enabled: enabled) { tap(category) }
+                        .containerRelativeFrame(.horizontal, count: 7, span: 2, spacing: 12)
                 }
-                Button {
-                    withAnimation(.snappy) { editing = false }
-                    categorySheet = .new
-                } label: {
+                Button { categorySheet = .new } label: {
                     VStack(spacing: 6) {
-                        Image(systemName: "plus")
-                            .font(.system(size: 26, weight: .semibold))
-                            .frame(maxWidth: .infinity)
+                        Circle()
+                            .strokeBorder(style: StrokeStyle(lineWidth: 1.5, dash: [5, 5]))
                             .aspectRatio(1, contentMode: .fit)
-                            .background(Circle().strokeBorder(style: StrokeStyle(lineWidth: 1.5, dash: [4, 4])))
+                            .overlay {
+                                Image(systemName: "plus")
+                                    .font(.system(size: 28, weight: .semibold))
+                            }
                         Text("カテゴリ追加")
                             .font(.system(size: 12, weight: .bold))
                             .lineLimit(1)
@@ -169,16 +145,23 @@ struct MoInputView: View {
                     .foregroundStyle(.secondary)
                 }
                 .buttonStyle(.plain)
-                .containerRelativeFrame(.horizontal, count: 9, span: 2, spacing: 10)
+                .containerRelativeFrame(.horizontal, count: 7, span: 2, spacing: 12)
             }
-            .padding(.vertical, 8)
+            .padding(.vertical, 6)
             .scrollTargetLayout()
         }
-        // Four and a half circles across, so it shows there are more to the side.
+        // Three and a half circles across, so it shows there are more to the side.
         .contentMargins(.horizontal, 16, for: .scrollContent)
         .scrollTargetBehavior(.viewAligned)
         .scrollIndicators(.hidden)
         .animation(.snappy, value: categories)
+        // Holding anywhere on the categories opens their list (edit, delete, reorder).
+        .simultaneousGesture(
+            LongPressGesture(minimumDuration: 0.5).onEnded { _ in
+                memoFocused = false
+                showCategoryList = true
+            }
+        )
     }
 
     private var memoField: some View {
@@ -222,10 +205,6 @@ struct MoInputView: View {
     }
 
     private func tap(_ category: MoCategory) {
-        if editing {
-            categorySheet = .edit(category)
-            return
-        }
         guard let amount = Int(digits), amount > 0 else { return }
         let record = mo.add(amount: amount, kind: kind, category: category, memo: memo.trimmingCharacters(in: .whitespacesAndNewlines))
         digits = ""
@@ -236,93 +215,44 @@ struct MoInputView: View {
             _ = mo.delete(record.id)
         }
     }
-
-    private func delete(_ category: MoCategory) {
-        let current = kind
-        guard let index = mo.deleteCategory(category, kind: current) else { return }
-        toasts.show("「\(category.label)」を削除しました") {
-            mo.restoreCategory(category, at: index, kind: current)
-        }
-    }
 }
 
-/// One category: icon tile and name. Disabled until an amount is entered; wiggles while editing.
+/// One category: a circle filling the tile's width, and its name. Disabled until an amount is entered.
 private struct MoCategoryTile: View {
     let category: MoCategory
     let kind: MoKind
     let enabled: Bool
-    let editing: Bool
     var onTap: () -> Void
-    var onLongPress: () -> Void
-    var onDelete: () -> Void
-    var onMove: (String) -> Void
-
-    @State private var targeted = false
 
     var body: some View {
-        let tile = VStack(spacing: 6) {
-            MoIcon(name: category.icon, size: 34)
-                .foregroundStyle(kind.color)
-                .frame(maxWidth: .infinity)
-                .aspectRatio(1, contentMode: .fit)
-                .background(Circle().fill(kind.color.opacity(targeted ? 0.25 : 0.1)))
-            Text(category.label)
-                .font(.system(size: 12, weight: .bold))
-                .foregroundStyle(.primary)
-                .lineLimit(1)
-        }
-        .overlay(alignment: .topTrailing) {
-            if editing {
-                Button(action: onDelete) {
-                    Image(systemName: "xmark")
-                        .font(.system(size: 10, weight: .bold))
-                        .foregroundStyle(.white)
-                        .frame(width: 22, height: 22)
-                        .background(Circle().fill(Color(.darkGray)))
-                }
-                .buttonStyle(.plain)
-                .offset(x: 2, y: -2)
-                .transition(.scale.combined(with: .opacity))
+        Button(action: onTap) {
+            VStack(spacing: 6) {
+                Circle()
+                    .fill(kind.color.opacity(0.1))
+                    .aspectRatio(1, contentMode: .fit)
+                    .overlay {
+                        MoIcon(name: category.icon, size: 36)
+                            .foregroundStyle(kind.color)
+                    }
+                Text(category.label)
+                    .font(.system(size: 12, weight: .bold))
+                    .foregroundStyle(.primary)
+                    .lineLimit(1)
             }
+            .contentShape(Rectangle())
         }
+        .buttonStyle(MoTileStyle())
+        .disabled(!enabled)
         .opacity(enabled ? 1 : 0.35)
-        .modifier(Wiggle(active: editing))
-        .contentShape(Rectangle())
-        .onTapGesture { if enabled { onTap() } }
-        .onLongPressGesture(minimumDuration: 0.5) { if !editing { onLongPress() } }
-
-        if editing {
-            // While editing, hold and drag a tile onto another to move it there.
-            tile
-                .draggable(category.label) {
-                    MoIcon(name: category.icon, size: 30)
-                        .foregroundStyle(kind.color)
-                        .frame(width: 72, height: 72)
-                        .background(Circle().fill(kind.color.opacity(0.15)))
-                }
-                .dropDestination(for: String.self) { labels, _ in
-                    guard let label = labels.first, label != category.label else { return false }
-                    onMove(label)
-                    return true
-                } isTargeted: { targeted = $0 }
-        } else {
-            tile
-        }
     }
 }
 
-/// The editing jiggle; only animates while active.
-private struct Wiggle: ViewModifier {
-    let active: Bool
-
-    func body(content: Content) -> some View {
-        if active {
-            content.phaseAnimator([-2.0, 2.0]) { view, angle in
-                view.rotationEffect(.degrees(angle))
-            } animation: { _ in .easeInOut(duration: 0.12) }
-        } else {
-            content
-        }
+/// A tile sinks a little while pressed.
+private struct MoTileStyle: ButtonStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .scaleEffect(configuration.isPressed ? 0.92 : 1)
+            .animation(.spring(response: 0.25, dampingFraction: 0.7), value: configuration.isPressed)
     }
 }
 
