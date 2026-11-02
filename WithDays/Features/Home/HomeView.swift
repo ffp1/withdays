@@ -65,92 +65,102 @@ struct HomeView: View {
         return CalendarMath.addMonths(pageMonths[id] ?? id, to: baseMonth)
     }
 
-    var body: some View {
-        NavigationStack(path: $path) {
-            ZStack {
-                if isMo {
-                    MoView {
-                        withAnimation(.snappy) { mode = HomeMode.calendar.rawValue }
-                    }
+    /// The screen for the current mode; split out so the body type-checks in reasonable time.
+    private var modeContent: some View {
+        ZStack {
+            if isMo {
+                MoView {
+                    withAnimation(.snappy) { mode = HomeMode.calendar.rawValue }
+                }
+                .transition(.move(edge: .bottom).combined(with: .opacity))
+            } else if isGo {
+                GoView {
+                    withAnimation(.snappy) { mode = HomeMode.calendar.rawValue }
+                }
                     .transition(.move(edge: .bottom).combined(with: .opacity))
-                } else if isGo {
-                    GoView {
-                        withAnimation(.snappy) { mode = HomeMode.calendar.rawValue }
+            } else if isTodo {
+                TodoView()
+                    .transition(.asymmetric(
+                        insertion: .move(edge: .trailing).combined(with: .opacity),
+                        removal: .move(edge: .trailing).combined(with: .opacity)
+                    ))
+            } else {
+                calendarContent
+                    .transition(.asymmetric(
+                        insertion: .move(edge: .leading).combined(with: .opacity),
+                        removal: .move(edge: .leading).combined(with: .opacity)
+                    ))
+            }
+        }
+    }
+
+    /// The navigation stack around the mode's screen, apart from the body to keep type-checking quick.
+    private var navigation: some View {
+        NavigationStack(path: $path) {
+            modeContent
+                .animation(.snappy(duration: 0.35), value: mode)
+                .onChange(of: mode) { _, new in UserDefaults.standard.set(new, forKey: SettingsKey.homeMode) }
+                .toolbar { toolbar }
+                // Mo has its own headers and tab bar.
+                .toolbar(isMo ? .hidden : .visible, for: .navigationBar)
+                .navigationBarTitleDisplayMode(.inline)
+                .navigationDestination(for: HomeRoute.self) { route in
+                    switch route {
+                    case .search:
+                        SearchView { date in
+                            jump(to: date)
+                            selectedDate = CalendarMath.startOfDay(date)
+                            path.removeAll()
+                        }
+                    case .settings:
+                        SettingsView()
                     }
-                        .transition(.move(edge: .bottom).combined(with: .opacity))
-                } else if isTodo {
-                    TodoView()
-                        .transition(.asymmetric(
-                            insertion: .move(edge: .trailing).combined(with: .opacity),
-                            removal: .move(edge: .trailing).combined(with: .opacity)
-                        ))
-                } else {
-                    calendarContent
-                        .transition(.asymmetric(
-                            insertion: .move(edge: .leading).combined(with: .opacity),
-                            removal: .move(edge: .leading).combined(with: .opacity)
-                        ))
+                }
+        }
+    }
+
+    var body: some View {
+        navigation
+            .overlay(alignment: .bottom) { trayLayer }
+            .overlay(alignment: .bottom) { toastLayer }
+            .overlay { fabMenuLayer }
+            .sensoryFeedback(.impact(weight: .medium), trigger: fabMenuShown) { _, new in new }
+            .sensoryFeedback(.selection, trigger: fabHover) { _, new in new != nil }
+            .sheet(isPresented: $showMonthPicker) {
+                MonthPickerSheet(selected: displayedMonth) { jump(to: $0) }
+                    .presentationDetents([.medium])
+            }
+            .sheet(item: $editor) { mode in
+                EventEditorView(mode: mode, day: selectedDate)
+            }
+            .sheet(item: $detail, onDismiss: {
+                if newEventAfterDetail {
+                    newEventAfterDetail = false
+                    editor = .new
+                }
+            }) { ref in
+                EventDetailSheet(event: ref.event) { kind in startRelocation(ref.event, kind) }
+            }
+            .sensoryFeedback(.impact(weight: .medium), trigger: detail?.id) { _, new in new != nil }
+            .sensoryFeedback(.impact(weight: .medium), trigger: showTemplates) { _, new in new }
+            .sensoryFeedback(.impact(weight: .heavy), trigger: todayPulse)
+            .sensoryFeedback(.impact(weight: .medium), trigger: store.lastDeleted?.id) { _, new in new != nil }
+            .onChange(of: path) { _, new in if !new.isEmpty { closeTray() } }
+            .onChange(of: showMonthPicker) { _, shown in if shown { closeTray() } }
+            .onChange(of: store.lastDeleted?.id) { _, _ in showToast() }
+            .onChange(of: selectedDate) { _, new in
+                // Picked on the calendar (not swiped): slide the list there with a quick, sharp ease-out,
+                // one page wide however far the day is.
+                let day = CalendarMath.startOfDay(new)
+                // A swipe already sliding there selected it itself.
+                guard !CalendarMath.isSameDay(day, listDay), dayPager.target != day else { return }
+                dayPager.slide(to: day, side: day > listDay ? 1 : -1, animation: .timingCurve(0.16, 1, 0.3, 1, duration: 0.3)) {
+                    listDay = $0
                 }
             }
-            .animation(.snappy(duration: 0.35), value: mode)
-            .onChange(of: mode) { _, new in UserDefaults.standard.set(new, forKey: SettingsKey.homeMode) }
-            .toolbar { toolbar }
-            // Mo has its own headers and tab bar.
-            .toolbar(isMo ? .hidden : .visible, for: .navigationBar)
-            .navigationBarTitleDisplayMode(.inline)
-            .navigationDestination(for: HomeRoute.self) { route in
-                switch route {
-                case .search:
-                    SearchView { date in
-                        jump(to: date)
-                        selectedDate = CalendarMath.startOfDay(date)
-                        path.removeAll()
-                    }
-                case .settings:
-                    SettingsView()
-                }
-            }
-        }
-        .overlay(alignment: .bottom) { trayLayer }
-        .overlay(alignment: .bottom) { toastLayer }
-        .overlay { fabMenuLayer }
-        .sensoryFeedback(.impact(weight: .medium), trigger: fabMenuShown) { _, new in new }
-        .sensoryFeedback(.selection, trigger: fabHover) { _, new in new != nil }
-        .sheet(isPresented: $showMonthPicker) {
-            MonthPickerSheet(selected: displayedMonth) { jump(to: $0) }
-                .presentationDetents([.medium])
-        }
-        .sheet(item: $editor) { mode in
-            EventEditorView(mode: mode, day: selectedDate)
-        }
-        .sheet(item: $detail, onDismiss: {
-            if newEventAfterDetail {
-                newEventAfterDetail = false
-                editor = .new
-            }
-        }) { ref in
-            EventDetailSheet(event: ref.event) { kind in startRelocation(ref.event, kind) }
-        }
-        .sensoryFeedback(.impact(weight: .medium), trigger: detail?.id) { _, new in new != nil }
-        .sensoryFeedback(.impact(weight: .medium), trigger: showTemplates) { _, new in new }
-        .sensoryFeedback(.impact(weight: .heavy), trigger: todayPulse)
-        .sensoryFeedback(.impact(weight: .medium), trigger: store.lastDeleted?.id) { _, new in new != nil }
-        .onChange(of: path) { _, new in if !new.isEmpty { closeTray() } }
-        .onChange(of: showMonthPicker) { _, shown in if shown { closeTray() } }
-        .onChange(of: store.lastDeleted?.id) { _, _ in showToast() }
-        .onChange(of: selectedDate) { _, new in
-            // Picked on the calendar (not swiped): slide the list there with a quick, sharp ease-out,
-            // one page wide however far the day is.
-            let day = CalendarMath.startOfDay(new)
-            // A swipe already sliding there selected it itself.
-            guard !CalendarMath.isSameDay(day, listDay), dayPager.target != day else { return }
-            dayPager.slide(to: day, side: day > listDay ? 1 : -1, animation: .timingCurve(0.16, 1, 0.3, 1, duration: 0.3)) {
-                listDay = $0
-            }
-        }
-        .spanDialog($spanRequest)
-        .errorAlert($errorMessage)
-        .onOpenURL(perform: open)
+            .spanDialog($spanRequest)
+            .errorAlert($errorMessage)
+            .onOpenURL(perform: open)
     }
 
     // MARK: Calendar
