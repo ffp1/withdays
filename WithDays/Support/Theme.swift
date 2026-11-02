@@ -48,6 +48,7 @@ enum SettingsKey {
     static let createdDefaultTodoLists = "createdDefaultTodoLists"
     static let dimPastEvents = "dimPastEvents"
     static let goTransitMargin = "goTransitMargin"
+    static let moMonthStart = "moMonthStart"
 }
 
 enum AppTheme: String, CaseIterable, Identifiable {

@@ -2,16 +2,17 @@ import Charts
 import SwiftUI
 
 /// A month's balance and where the money went / came from. Swipe sideways (or use the arrows) for other months.
+/// A month runs from the start day set in Settings (every month on day x) to the day before it next month.
 struct MoStatsView: View {
+    @AppStorage(SettingsKey.moMonthStart) private var startDay = 1
     @State private var offset = 0
-    private let baseMonth = CalendarMath.startOfMonth(.now)
 
     private static let range = -600...600
 
     var body: some View {
         TabView(selection: $offset) {
             ForEach(Self.range, id: \.self) { index in
-                MoStatsPage(month: month(index))
+                MoStatsPage(period: period(index))
                     .tag(index)
             }
         }
@@ -20,7 +21,7 @@ struct MoStatsView: View {
         // The same bar as the calendar's: month on the left, arrows on the right.
         .toolbar {
             ToolbarItem(placement: .topBarLeading) {
-                Text(Fmt.monthTitle(month(offset)))
+                Text(title(period(offset)))
                     .font(.system(size: 20, weight: .bold))
                     .monospacedDigit()
                     .contentTransition(.numericText(value: Double(offset)))
@@ -35,8 +36,23 @@ struct MoStatsView: View {
         }
     }
 
-    private func month(_ index: Int) -> Date {
-        CalendarMath.addMonths(index, to: baseMonth)
+    /// The period `index` months from the one holding today.
+    private func period(_ index: Int) -> MoPeriod {
+        let day = min(max(startDay, 1), 28)
+        let today = CalendarMath.startOfDay(.now)
+        var start = CalendarMath.addDays(day - 1, to: CalendarMath.startOfMonth(today))
+        if start > today { start = CalendarMath.addMonths(-1, to: start) }
+        start = CalendarMath.addMonths(index, to: start)
+        return MoPeriod(start: start, end: CalendarMath.addMonths(1, to: start))
+    }
+
+    /// 2026年11月, or 10/25〜11/24 when months start on another day.
+    private func title(_ period: MoPeriod) -> String {
+        guard CalendarMath.day(period.start) != 1 else { return Fmt.monthTitle(period.start) }
+        let last = CalendarMath.addDays(-1, to: period.end)
+        let calendar = CalendarMath.calendar
+        let short: (Date) -> String = { "\(calendar.component(.month, from: $0))/\(calendar.component(.day, from: $0))" }
+        return "\(short(period.start))〜\(short(last))"
     }
 
     private func arrow(_ icon: String, step: Int) -> some View {
@@ -48,13 +64,18 @@ struct MoStatsView: View {
     }
 }
 
+struct MoPeriod: Hashable {
+    let start: Date
+    let end: Date
+}
+
 private struct MoStatsPage: View {
-    let month: Date
+    let period: MoPeriod
 
     @Environment(MoStore.self) private var mo
 
     var body: some View {
-        let records = mo.records(inMonth: month)
+        let records = mo.records(from: period.start, to: period.end)
         let expense = records.filter { $0.kind == .expense }.reduce(0) { $0 + $1.amount }
         let income = records.filter { $0.kind == .income }.reduce(0) { $0 + $1.amount }
         let balance = income - expense

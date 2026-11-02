@@ -55,9 +55,9 @@ private struct MoTabBar: View {
 
     var body: some View {
         HStack(spacing: 0) {
-            side(.stats, icon: "chart.pie", selectedIcon: "chart.pie.fill", label: "統計")
+            side(.stats, icon: "chart.pie.fill", label: "統計")
             Color.clear.frame(width: 96)
-            side(.calendar, icon: "calendar", selectedIcon: "calendar", label: "カレンダー")
+            side(.calendar, icon: "calendar", label: "カレンダー")
         }
         .frame(height: 64)
         .glassEffect(.regular, in: .capsule)
@@ -85,12 +85,13 @@ private struct MoTabBar: View {
         .sensoryFeedback(.impact(weight: .medium), trigger: leaving)
     }
 
-    private func side(_ target: MoTab, icon: String, selectedIcon: String, label: String) -> some View {
+    private func side(_ target: MoTab, icon: String, label: String) -> some View {
         Button { tab = target } label: {
             VStack(spacing: 2) {
-                Image(systemName: tab == target ? selectedIcon : icon)
+                // The color shows the selection; the symbol bounces when picked.
+                Image(systemName: icon)
                     .font(.system(size: 20, weight: .semibold))
-                    .contentTransition(.symbolEffect(.replace))
+                    .symbolEffect(.bounce, value: tab == target)
                 Text(label)
                     .font(.system(size: 10, weight: .bold))
             }

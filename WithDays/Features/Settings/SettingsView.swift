@@ -9,6 +9,7 @@ struct SettingsView: View {
     @AppStorage(SettingsKey.weekStart, store: AppGroup.defaults) private var weekStart = 1
     @AppStorage(SettingsKey.dimPastEvents) private var dimPast = false
     @AppStorage(SettingsKey.goTransitMargin) private var transitMargin = 2
+    @AppStorage(SettingsKey.moMonthStart) private var moMonthStart = 1
 
     var body: some View {
         List {
@@ -49,6 +50,16 @@ struct SettingsView: View {
                         }
                     }
                 }
+            }
+
+            Section {
+                Picker("月の始まり", selection: $moMonthStart) {
+                    ForEach(1...28, id: \.self) { Text("毎月\($0)日").tag($0) }
+                }
+            } header: {
+                Text("Mo")
+            } footer: {
+                Text("統計の「今月」がこの日から始まります。カレンダーは変わりません。")
             }
 
             Section {

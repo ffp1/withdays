@@ -12,7 +12,7 @@ struct MoCalendarView: View {
     private let baseMonth = CalendarMath.startOfMonth(.now)
 
     private static let range = -600...600
-    private static let rowHeight: CGFloat = 72
+    private static let rowHeight = GridMetrics.rowHeight
 
     var body: some View {
         VStack(spacing: 0) {
@@ -192,12 +192,12 @@ private struct MoMonthGrid: View {
                 .fill(isSelected ? Color.brand : Color.dayLine)
                 .frame(height: 1)
                 .padding(.horizontal, 3)
-                .offset(y: 26)
+                .offset(y: 20)
             Text("\(CalendarMath.day(day))")
-                .font(.system(size: 16))
+                .font(.system(size: 12, weight: .regular))
                 .monospacedDigit()
                 .foregroundStyle(isToday ? Color.white : Color.dayNumber(weekday: CalendarMath.weekday(day), isHoliday: isHoliday))
-                .frame(minWidth: 24, minHeight: 24)
+                .frame(minWidth: 18, minHeight: 18)
                 .background { if isToday { Circle().fill(Color.brand) } }
                 .padding(.leading, 2)
                 .padding(.top, 1)
@@ -211,13 +211,13 @@ private struct MoMonthGrid: View {
                         .foregroundStyle(Color.moIncome)
                 }
             }
-            .font(MoFormat.number(14))
+            .font(.system(size: 11, weight: .semibold))
             .monospacedDigit()
             .lineLimit(1)
             .minimumScaleFactor(0.55)
             .frame(maxWidth: .infinity, alignment: .trailing)
             .padding(.horizontal, 3)
-            .padding(.top, 30)
+            .padding(.top, GridMetrics.laneTop)
         }
         .frame(maxWidth: .infinity)
         .frame(height: rowHeight, alignment: .topLeading)

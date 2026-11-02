@@ -46,8 +46,8 @@ final class MoStore {
         state.records.filter { CalendarMath.isSameDay($0.date, day) }.sorted { $0.date > $1.date }
     }
 
-    func records(inMonth month: Date) -> [MoRecord] {
-        state.records.filter { CalendarMath.isSameMonth($0.date, month) }
+    func records(from start: Date, to end: Date) -> [MoRecord] {
+        state.records.filter { $0.date >= start && $0.date < end }
     }
 
     /// Expense and income totals per day for [start, end).

@@ -34,6 +34,9 @@ struct HomeView: View {
     /// Where the finger is while the menu is up; letting go on ＋ itself adds an event as a tap would.
     @State private var fabPoint: CGPoint?
     @State private var fabLongPressed = false
+    /// True while a finger is down on ＋; the hold's progress (0–1) turns ＋ into × and dims the screen.
+    @GestureState private var fabPressing = false
+    @State private var fabPress: CGFloat = 0
     /// During a long jump the neighbouring page temporarily shows the target month, so the scroll covers one page.
     @State private var pageMonths: [Int: Int] = [:]
     @State private var selectedDate: Date
@@ -227,10 +230,19 @@ struct HomeView: View {
                 }
                 .disabled(relocation?.targets.isEmpty ?? false)
                 .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { fabFrame = $0 }
+                .onChange(of: fabPressing) { _, pressing in
+                    // Starts a moment after touch-down, so a plain tap doesn't flash it.
+                    if pressing, !fabMenuShown {
+                        withAnimation(.easeIn(duration: 0.4).delay(0.1)) { fabPress = 1 }
+                    } else if !pressing {
+                        withAnimation(.easeOut(duration: 0.2)) { fabPress = 0 }
+                    }
+                }
                 // Holding ＋ floats Mo / Go above it; slide onto one and let go to open it.
                 .simultaneousGesture(
                     LongPressGesture(minimumDuration: 0.5)
                         .sequenced(before: DragGesture(minimumDistance: 0, coordinateSpace: .global))
+                        .updating($fabPressing) { _, pressing, _ in pressing = relocation == nil }
                         .onChanged { value in
                             guard relocation == nil, case .second(true, let drag) = value else { return }
                             if !fabMenuShown {
@@ -251,6 +263,7 @@ struct HomeView: View {
                             withAnimation(.spring(response: 0.3, dampingFraction: 0.85)) {
                                 fabMenuShown = false
                                 fabHover = nil
+                                fabPress = 0
                             }
                             fabPoint = nil
                             if let target {
@@ -496,42 +509,48 @@ struct HomeView: View {
         }
     }
 
-    /// The menu over a dimmed, blurred screen. Mo and Go pop up out of ＋ (a copy of it, drawn over the blur),
-    /// one after the other.
+    /// While ＋ is held the screen dims and blurs little by little (still readable) and ＋ turns into ×;
+    /// once held long enough Mo and Go pop up out of it. ＋ here is a copy drawn over the blur.
     @ViewBuilder
     private var fabMenuLayer: some View {
+        let active = fabPress > 0 || fabMenuShown
         ZStack(alignment: .bottomTrailing) {
-            if fabMenuShown {
+            if active {
                 Rectangle()
                     .fill(.ultraThinMaterial)
-                    .environment(\.colorScheme, .dark)
-                    .overlay(Color.black.opacity(0.25))
+                    .overlay(Color.black.opacity(0.12))
+                    .opacity(fabMenuShown ? 1 : fabPress)
                     .ignoresSafeArea()
-                    .transition(.opacity)
             }
-            VStack(alignment: .trailing, spacing: 16) {
+            VStack(alignment: .trailing, spacing: 26) {
                 if fabMenuShown {
                     fabMenuRow(.go, name: "Go", logo: "GoLogo")
                         .transition(fabMenuTransition(delay: 0.05))
                     fabMenuRow(.mo, name: "Mo", logo: "MoLogo")
                         .transition(fabMenuTransition(delay: 0))
                 }
-                if fabMenuShown {
+                if active {
                     Button {} label: {
                         Image(systemName: "plus")
                             .font(.system(size: 26.4, weight: .semibold))
                             .foregroundStyle(.white)
+                            .rotationEffect(.degrees(45 * (fabMenuShown ? 1 : fabPress)))
                             .frame(width: 56, height: 56)
                     }
                     .buttonStyle(.glassProminent)
                     .buttonBorderShape(.circle)
-                    .scaleEffect(fabHover == nil && fabPoint.map { fabFrame.contains($0) } != false ? 1.06 : 1)
+                    .scaleEffect(fabMenuShown && fabHover == nil && fabOverButton ? 1.06 : 1)
                     .animation(.spring(response: 0.25, dampingFraction: 0.7), value: fabHover)
                 }
             }
             .padding(20)
         }
         .allowsHitTesting(false)
+    }
+
+    /// The finger is still on ＋ (or hasn't moved).
+    private var fabOverButton: Bool {
+        fabPoint.map { fabFrame.contains($0) } ?? true
     }
 
     /// Springs up out of ＋: grows from its corner and rises into place.
@@ -553,8 +572,7 @@ struct HomeView: View {
         return HStack(spacing: 14) {
             Text(name)
                 .font(.system(size: 22, weight: .regular))
-                .foregroundStyle(.white)
-                .shadow(color: .black.opacity(0.25), radius: 6, y: 2)
+                .foregroundStyle(.primary)
             Image(logo)
                 .renderingMode(.template)
                 .resizable()
