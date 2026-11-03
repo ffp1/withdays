@@ -12,6 +12,8 @@ struct MoView: View {
     @State private var tab = MoTab.input
     /// The input tab's kind also colors the tab bar's center button, as on the web app.
     @State private var kind = MoKind.expense
+    /// How far into holding ＋ (0–1): everything but ＋ dims and blurs on the way back to the calendar.
+    @State private var press: CGFloat = 0
 
     var body: some View {
         ZStack {
@@ -29,6 +31,7 @@ struct MoView: View {
         }
         .animation(.snappy(duration: 0.25), value: tab)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .modifier(MoHoldDim(press: press))
         // Typing a memo shows the keyboard over the screen instead of squeezing it.
         .ignoresSafeArea(.keyboard, edges: .bottom)
         .safeAreaInset(edge: .bottom, spacing: 0) {
@@ -37,8 +40,9 @@ struct MoView: View {
                     UndoToastView(toast: toast) { toasts.performUndo() }
                         .padding(.horizontal, 20)
                         .id(toast.id)
+                        .modifier(MoHoldDim(press: press))
                 }
-                MoTabBar(tab: $tab, color: kind.color, onCalendar: onCalendar)
+                MoTabBar(tab: $tab, press: $press, color: kind.color, onCalendar: onCalendar)
             }
             .ignoresSafeArea(.keyboard, edges: .bottom)
         }
@@ -48,6 +52,7 @@ struct MoView: View {
 
 private struct MoTabBar: View {
     @Binding var tab: MoTab
+    @Binding var press: CGFloat
     let color: Color
     var onCalendar: () -> Void
 
@@ -61,11 +66,16 @@ private struct MoTabBar: View {
         }
         .frame(height: 64)
         .glassEffect(.regular, in: .capsule)
+        // The capsule's corners mustn't get a dark box, so it darkens itself instead.
+        .blur(radius: 6 * press)
+        .brightness(-0.08 * press)
         .overlay {
             // The input tab stands out: a big raised button. Holding it goes back to the calendar.
             Image(systemName: "plus")
                 .font(.system(size: 34, weight: .semibold))
                 .foregroundStyle(.white)
+                // Turns into × as the hold goes on.
+                .rotationEffect(.degrees(45 * Double(press)))
                 .frame(width: 80, height: 80)
                 .glassEffect(.regular.tint(color).interactive(), in: .circle)
                 .scaleEffect(tab == .input ? 1 : 0.92)
@@ -75,6 +85,10 @@ private struct MoTabBar: View {
                 .onLongPressGesture(minimumDuration: 0.5) {
                     leaving.toggle()
                     onCalendar()
+                } onPressingChanged: { pressing in
+                    withAnimation(pressing ? .easeIn(duration: 0.5) : .easeOut(duration: 0.2)) {
+                        press = pressing ? 1 : 0
+                    }
                 }
                 .animation(.snappy, value: tab)
                 .animation(.snappy, value: color)
@@ -100,5 +114,20 @@ private struct MoTabBar: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+    }
+}
+
+/// Dims and blurs a view as ＋ is held, light enough that it stays just readable.
+private struct MoHoldDim: ViewModifier {
+    let press: CGFloat
+
+    func body(content: Content) -> some View {
+        content
+            .blur(radius: 6 * press)
+            .overlay {
+                Color.black.opacity(0.12 * press)
+                    .ignoresSafeArea()
+                    .allowsHitTesting(false)
+            }
     }
 }
