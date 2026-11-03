@@ -9,7 +9,7 @@ struct TodoWidget: Widget {
         StaticConfiguration(kind: "TodoWidget", provider: TodoProvider()) { entry in
             TodoWidgetView(entry: entry)
         }
-        .configurationDisplayName("ToDo")
+        .configurationDisplayName("Td")
         .description("設定で選んだカテゴリのToDoを表示します。")
         .supportedFamilies([.systemMedium, .systemLarge])
     }

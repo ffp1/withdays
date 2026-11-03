@@ -23,6 +23,11 @@ enum AppInfo {
 
     /// Newest first. Add an entry here with each release.
     static let changelog: [Release] = [
+        Release(version: "1.4.1", date: "2026.11.03", notes: [
+            "＋ボタン長押しのメニューにTdを追加、各ロゴを刷新",
+            "Mo：＋ボタンをダブルタップで支出 / 収入を切り替え",
+            "Go：電車の検索は駅までの徒歩を待たず今の時刻から",
+        ]),
         Release(version: "1.4.0", date: "2026.11.03", notes: [
             "Mo：家計簿（入力・統計・カレンダー）",
             "＋ボタン長押しでMo / Goを選んで開く",

@@ -4,7 +4,7 @@ enum MoTab {
     case stats, input, calendar
 }
 
-/// Mo: the household budget. Three tabs; holding the input tab goes back to the calendar.
+/// Mo: the household budget. Three tabs; double-tapping ＋ switches 支出 / 収入, holding it goes back to Cal.
 struct MoView: View {
     var onCalendar: () -> Void
 
@@ -42,7 +42,7 @@ struct MoView: View {
                         .id(toast.id)
                         .modifier(MoHoldDim(press: press))
                 }
-                MoTabBar(tab: $tab, press: $press, color: kind.color, onCalendar: onCalendar)
+                MoTabBar(tab: $tab, kind: $kind, press: $press, onCalendar: onCalendar)
             }
             .ignoresSafeArea(.keyboard, edges: .bottom)
         }
@@ -52,11 +52,14 @@ struct MoView: View {
 
 private struct MoTabBar: View {
     @Binding var tab: MoTab
+    @Binding var kind: MoKind
     @Binding var press: CGFloat
-    let color: Color
     var onCalendar: () -> Void
 
     @State private var leaving = false
+    @State private var lastTap = Date.distantPast
+
+    private var color: Color { kind.color }
 
     var body: some View {
         HStack(spacing: 0) {
@@ -81,7 +84,17 @@ private struct MoTabBar: View {
                 .scaleEffect(tab == .input ? 1 : 0.92)
                 .offset(y: -18)
                 .contentShape(Circle())
-                .onTapGesture { tab = .input }
+                // A second tap soon after switches 支出 / 収入; the first still opens input at once.
+                .onTapGesture {
+                    let now = Date()
+                    if tab == .input, now.timeIntervalSince(lastTap) < 0.3 {
+                        withAnimation(.snappy) { kind = kind == .expense ? .income : .expense }
+                        lastTap = .distantPast
+                    } else {
+                        tab = .input
+                        lastTap = now
+                    }
+                }
                 .onLongPressGesture(minimumDuration: 0.5) {
                     leaving.toggle()
                     onCalendar()
@@ -96,6 +109,7 @@ private struct MoTabBar: View {
         .padding(.horizontal, 20)
         .padding(.bottom, 8)
         .sensoryFeedback(.selection, trigger: tab)
+        .sensoryFeedback(.selection, trigger: kind)
         .sensoryFeedback(.impact(weight: .medium), trigger: leaving)
     }
 

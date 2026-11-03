@@ -26,14 +26,6 @@ struct HomeView: View {
     @State private var dayPager = PagerModel<Date>()
     /// Set when a double tap lands while an event sheet is opening: close it, then open a new event.
     @State private var newEventAfterDetail = false
-    /// Holding ＋ floats the Mo / Go menu; sliding onto one and letting go opens it.
-    @State private var fabMenuShown = false
-    @State private var fabHover: HomeMode?
-    @State private var fabMenuFrames: [HomeMode: CGRect] = [:]
-    @State private var fabFrame: CGRect = .zero
-    /// Where the finger is while the menu is up; letting go on ＋ itself adds an event as a tap would.
-    @State private var fabPoint: CGPoint?
-    @State private var fabLongPressed = false
     /// During a long jump the neighbouring page temporarily shows the target month, so the scroll covers one page.
     @State private var pageMonths: [Int: Int] = [:]
     @State private var selectedDate: Date
@@ -126,8 +118,6 @@ struct HomeView: View {
             .overlay(alignment: .bottom) { trayLayer }
             .overlay(alignment: .bottom) { calendarBar }
             .overlay(alignment: .bottom) { toastLayer }
-            .sensoryFeedback(.impact(weight: .medium), trigger: fabMenuShown) { (_: Bool, new: Bool) in new }
-            .sensoryFeedback(.selection, trigger: fabHover) { (_: HomeMode?, new: HomeMode?) in new != nil }
     }
 
     /// The calendar's sheets: month picker, editor and event detail.
@@ -246,7 +236,7 @@ struct HomeView: View {
         ToolbarItem(placement: .topBarLeading) {
             // Go keeps a clean screen; its calendar button is in the presets sheet.
             if isTodo {
-                Text("ToDo")
+                Text("Td")
                     .font(.system(size: 20, weight: .bold))
                     .foregroundStyle(Color.brand)
                     .fixedSize()
@@ -428,8 +418,7 @@ struct HomeView: View {
         }
     }
 
-    /// The calendar's bottom buttons. Holding ＋ dims and blurs everything but ＋ itself and floats Mo / Go above it,
-    /// so they sit over the navigation bar's layer too.
+    /// Cal's bottom buttons, over the navigation bar's layer so that holding ＋ dims and blurs everything but ＋.
     @ViewBuilder
     private var calendarBar: some View {
         if !isMo, !isGo, !isTodo, path.isEmpty {
@@ -450,130 +439,26 @@ struct HomeView: View {
                     } else {
                         Spacer()
                     }
-                    // ＋ is drawn above the dim below; this keeps its place.
+                    // ＋ (CalFab) is drawn above its dim; this keeps its place.
                     Color.clear.frame(width: 56, height: 56)
                 }
                 .padding(20)
-                if fabMenuShown {
-                    Rectangle()
-                        .fill(.ultraThinMaterial)
-                        .overlay(Color.black.opacity(0.12))
-                        .ignoresSafeArea()
-                        .transition(.opacity)
-                        .allowsHitTesting(false)
-                }
-                VStack(alignment: .trailing, spacing: 26) {
-                    if fabMenuShown {
-                        fabMenuRow(.go, name: "Go", logo: "GoLogo")
-                            .transition(fabMenuTransition(delay: 0.05))
-                        fabMenuRow(.mo, name: "Mo", logo: "MoLogo")
-                            .transition(fabMenuTransition(delay: 0))
+                CalFab(
+                    icon: relocation != nil ? "checkmark" : "plus",
+                    menuEnabled: relocation == nil,
+                    disabled: relocation?.targets.isEmpty ?? false,
+                    onTap: {
+                        if relocation != nil { confirmRelocation() } else { openEditor(.new) }
+                    },
+                    onOpenMenu: closeTray,
+                    onPick: { target in
+                        withAnimation(.snappy(duration: 0.35)) { mode = target.rawValue }
                     }
-                    circleButton(relocation != nil ? "checkmark" : "plus", prominent: true) {
-                        if relocation != nil {
-                            confirmRelocation()
-                        } else if fabLongPressed {
-                            // The long press opened the menu; the release must not also add an event.
-                            fabLongPressed = false
-                        } else {
-                            openEditor(.new)
-                        }
-                    }
-                    .disabled(relocation?.targets.isEmpty ?? false)
-                    .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { fabFrame = $0 }
-                    // Holding ＋ floats Mo / Go above it; slide onto one and let go to open it.
-                    .simultaneousGesture(
-                        LongPressGesture(minimumDuration: 0.5)
-                            .sequenced(before: DragGesture(minimumDistance: 0, coordinateSpace: .global))
-                            .onChanged { value in
-                                guard relocation == nil, case .second(true, let drag) = value else { return }
-                                if !fabMenuShown {
-                                    fabLongPressed = true
-                                    closeTray()
-                                    withAnimation(.spring(response: 0.35, dampingFraction: 0.75)) { fabMenuShown = true }
-                                }
-                                if let drag {
-                                    fabPoint = drag.location
-                                    fabHover = fabMenuItem(at: drag.location)
-                                }
-                            }
-                            .onEnded { _ in
-                                guard fabMenuShown else { return }
-                                let target = fabHover
-                                // Not moved at all, or let go on ＋: a new event, as if it had been tapped.
-                                let onFab = fabPoint.map { fabFrame.insetBy(dx: -8, dy: -8).contains($0) } ?? true
-                                withAnimation(.spring(response: 0.3, dampingFraction: 0.85)) {
-                                    fabMenuShown = false
-                                    fabHover = nil
-                                }
-                                fabPoint = nil
-                                if let target {
-                                    withAnimation(.snappy(duration: 0.35)) { mode = target.rawValue }
-                                } else if onFab {
-                                    openEditor(.new)
-                                }
-                                // The button may or may not see the release; don't let the flag eat a later tap.
-                                DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { fabLongPressed = false }
-                            }
-                    )
-                    .scaleEffect(fabMenuShown && fabHover == nil && fabOverButton ? 1.06 : 1)
-                    .animation(.spring(response: 0.25, dampingFraction: 0.7), value: fabHover)
-                }
-                .padding(20)
+                )
             }
             .opacity(showTemplates ? 0 : 1)
             .transition(.move(edge: .leading).combined(with: .opacity))
         }
-    }
-
-    /// The finger is still on ＋ (or hasn't moved).
-    private var fabOverButton: Bool {
-        fabPoint.map { fabFrame.contains($0) } ?? true
-    }
-
-    /// Springs up out of ＋: grows from its corner and rises into place.
-    private func fabMenuTransition(delay: Double) -> AnyTransition {
-        .asymmetric(
-            insertion: .scale(scale: 0.2, anchor: .bottomTrailing)
-                .combined(with: .offset(y: 36))
-                .combined(with: .opacity)
-                .animation(.spring(response: 0.38, dampingFraction: 0.68).delay(delay)),
-            removal: .scale(scale: 0.4, anchor: .bottomTrailing)
-                .combined(with: .offset(y: 24))
-                .combined(with: .opacity)
-                .animation(.easeIn(duration: 0.15))
-        )
-    }
-
-    private func fabMenuRow(_ target: HomeMode, name: String, logo: String) -> some View {
-        let hovered = fabHover == target
-        return HStack(spacing: 14) {
-            Text(name)
-                .font(.system(size: 22, weight: .regular))
-                .foregroundStyle(.primary)
-            Image(logo)
-                .renderingMode(.template)
-                .resizable()
-                .scaledToFit()
-                .frame(width: 26, height: 26)
-                .foregroundStyle(hovered ? Color.white : Color.brand)
-                .frame(width: 52, height: 52)
-                .background(Circle().fill(hovered ? Color.brand : Color.white))
-                .shadow(color: .black.opacity(0.18), radius: 10, y: 4)
-                // Lines up with the middle of ＋ below.
-                .padding(.trailing, 2)
-        }
-        .scaleEffect(hovered ? 1.1 : 1, anchor: .trailing)
-        .animation(.spring(response: 0.25, dampingFraction: 0.65), value: hovered)
-        .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { fabMenuFrames[target] = $0 }
-        .allowsHitTesting(false)
-    }
-
-    /// Which row the finger is on: its height, from a little left of its name to the screen's edge.
-    private func fabMenuItem(at point: CGPoint) -> HomeMode? {
-        fabMenuFrames.first { _, frame in
-            point.y >= frame.minY - 7 && point.y <= frame.maxY + 7 && point.x >= frame.minX - 40
-        }?.key
     }
 
     // MARK: Actions

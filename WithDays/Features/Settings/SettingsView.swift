@@ -42,7 +42,7 @@ struct SettingsView: View {
             }
 
             if todos.access == .granted {
-                Section("ToDo") {
+                Section("Td") {
                     NavigationLink("カテゴリ") { TodoCategorySettingsView() }
                     Picker("ウィジェットにするカテゴリ", selection: widgetListBinding) {
                         ForEach(todos.sortedLists, id: \.calendarIdentifier) { list in

@@ -1,16 +1,16 @@
 {
-  "images" : [
+  "images": [
     {
-      "filename" : "GoLogo.png",
-      "idiom" : "universal"
+      "filename": "GoLogo.svg",
+      "idiom": "universal"
     }
   ],
-  "info" : {
-    "author" : "xcode",
-    "version" : 1
+  "info": {
+    "author": "xcode",
+    "version": 1
   },
-  "properties" : {
-    "preserves-vector-representation" : false,
-    "template-rendering-intent" : "template"
+  "properties": {
+    "preserves-vector-representation": true,
+    "template-rendering-intent": "template"
   }
 }
