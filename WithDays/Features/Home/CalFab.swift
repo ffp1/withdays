@@ -5,6 +5,8 @@ import SwiftUI
 /// It keeps the finger's state to itself, so following the finger doesn't redraw the calendar.
 struct CalFab: View {
     let icon: String
+    /// The same size as the other bottom button (a glass button's circle), measured by the caller.
+    let size: CGFloat
     /// Off while moving / duplicating, when ＋ is the confirm button.
     let menuEnabled: Bool
     let disabled: Bool
@@ -35,7 +37,6 @@ struct CalFab: View {
         Item(mode: .mo, name: "Mo", logo: "MoLogo"),
     ]
     private static let circle: CGFloat = 52
-    private static let fab: CGFloat = 56
     private static let spacing: CGFloat = 26
 
     var body: some View {
@@ -50,7 +51,9 @@ struct CalFab: View {
             }
             HStack(alignment: .bottom, spacing: 14) {
                 labels
-                GlassEffectContainer(spacing: 24) {
+                // Small enough that a grown (hovered) logo never melts into the next one,
+                // while a logo leaving ＋ still flows out of it.
+                GlassEffectContainer(spacing: 10) {
                     VStack(alignment: .trailing, spacing: Self.spacing) {
                         if shown {
                             ForEach(Array(Self.items.enumerated()), id: \.element.id) { index, item in
@@ -80,7 +83,6 @@ struct CalFab: View {
                         .foregroundStyle(.primary)
                         .frame(height: Self.circle)
                         .scaleEffect(hover == item.mode ? 1.1 : 1, anchor: .trailing)
-                        .animation(.spring(response: 0.25, dampingFraction: 0.65), value: hover)
                         .transition(.asymmetric(
                             insertion: .opacity.combined(with: .offset(x: 12))
                                 .animation(.easeOut(duration: 0.2).delay(0.18)),
@@ -88,7 +90,7 @@ struct CalFab: View {
                         ))
                 }
             }
-            Color.clear.frame(width: 0, height: Self.fab)
+            Color.clear.frame(width: 0, height: size)
         }
         .allowsHitTesting(false)
     }
@@ -104,17 +106,16 @@ struct CalFab: View {
             .frame(width: Self.circle, height: Self.circle)
             .glassEffect(hovered ? .regular.tint(Color.brand) : .regular, in: .circle)
             .glassEffectID(item.mode.rawValue, in: glass)
-            .scaleEffect(hovered ? 1.12 : 1)
-            .animation(.spring(response: 0.25, dampingFraction: 0.65), value: hovered)
+            .scaleEffect(hovered ? 1.1 : 1)
             // Lines up with the middle of ＋ below.
-            .padding(.trailing, (Self.fab - Self.circle) / 2)
+            .padding(.trailing, (size - Self.circle) / 2)
             .allowsHitTesting(false)
     }
 
     /// Each logo starts inside ＋ and is pulled up out of it; in the glass container they stay joined
     /// until they're far enough apart, so it reads as one drop splitting.
     private func split(rank: Int) -> AnyTransition {
-        let distance = CGFloat(rank) * (Self.circle + Self.spacing) - (Self.fab - Self.circle) / 2
+        let distance = CGFloat(rank) * (Self.circle + Self.spacing) - (size - Self.circle) / 2
         return .asymmetric(
             insertion: .offset(y: distance).combined(with: .scale(scale: 0.6))
                 .animation(.spring(response: 0.42, dampingFraction: 0.72).delay(Double(rank - 1) * 0.04)),
@@ -128,12 +129,12 @@ struct CalFab: View {
             .font(.system(size: 26.4, weight: .semibold))
             .foregroundStyle(.white)
             .contentTransition(.symbolEffect(.replace))
-            .frame(width: Self.fab, height: Self.fab)
-            .glassEffect(.regular.tint(Color.brand).interactive(), in: .circle)
+            .frame(width: size, height: size)
+            // Not interactive while the menu is up: the press effect would chase the finger.
+            .glassEffect(.regular.tint(Color.brand).interactive(!shown), in: .circle)
             .glassEffectID("fab", in: glass)
             .contentShape(Circle())
             .scaleEffect(shown && hover == nil && onFab ? 1.06 : 1)
-            .animation(.spring(response: 0.25, dampingFraction: 0.7), value: hover)
             .opacity(disabled ? 0.5 : 1)
             .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { fabFrame = $0 }
             .onTapGesture {
@@ -156,9 +157,13 @@ struct CalFab: View {
                         guard let drag else { return }
                         // Only real changes are stored, so a moving finger doesn't redraw anything.
                         let target = item(at: drag.location)
-                        if target != hover { hover = target }
                         let over = fabFrame.insetBy(dx: -8, dy: -8).contains(drag.location)
-                        if over != onFab { onFab = over }
+                        guard target != hover || over != onFab else { return }
+                        // One explicit spring for each change, so the scales move smoothly.
+                        withAnimation(.spring(response: 0.28, dampingFraction: 0.72)) {
+                            hover = target
+                            onFab = over
+                        }
                     }
                     .onEnded { _ in
                         guard shown else { return }

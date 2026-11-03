@@ -40,6 +40,8 @@ struct HomeView: View {
     @State private var spanRequest: SpanRequest?
     @State private var errorMessage: String?
     @State private var todayPulse = 0
+    /// The bottom glass buttons' size, so Cal's ＋ (drawn by CalFab) matches them.
+    @State private var barButtonSize: CGFloat = 56
 
     init() {
         let stored = UserDefaults.standard.double(forKey: SettingsKey.lastMonth)
@@ -428,6 +430,7 @@ struct HomeView: View {
                     circleButton(relocation != nil ? "xmark" : "arrow.uturn.left", prominent: false) {
                         if relocation != nil { cancelRelocation() } else { backToThisMonth() }
                     }
+                    .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { barButtonSize = $0 }
                     if let relocation {
                         Text(relocation.kind == .move ? "移動先を選択" : "複製先を選択")
                             .font(.system(size: 15, weight: .bold))
@@ -440,11 +443,12 @@ struct HomeView: View {
                         Spacer()
                     }
                     // ＋ (CalFab) is drawn above its dim; this keeps its place.
-                    Color.clear.frame(width: 56, height: 56)
+                    Color.clear.frame(width: barButtonSize, height: barButtonSize)
                 }
                 .padding(20)
                 CalFab(
                     icon: relocation != nil ? "checkmark" : "plus",
+                    size: barButtonSize,
                     menuEnabled: relocation == nil,
                     disabled: relocation?.targets.isEmpty ?? false,
                     onTap: {

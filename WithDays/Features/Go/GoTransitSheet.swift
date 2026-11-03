@@ -12,6 +12,8 @@ struct GoTransitSheet: View {
 
     @State private var query = ""
     @State private var stations: [Transit.Place] = []
+    /// What the station list says while it has nothing to show: searching, nothing found, or why it failed.
+    @State private var suggestNote: String?
     /// The station picked, and the ways there once found.
     @State private var destination: Transit.Place?
     @State private var options: [Transit.Option] = []
@@ -51,13 +53,22 @@ struct GoTransitSheet: View {
             let text = query.trimmingCharacters(in: .whitespacesAndNewlines)
             guard !text.isEmpty else {
                 stations = []
+                suggestNote = nil
                 return
             }
             // Wait for the typing (and the Japanese input) to settle.
             try? await Task.sleep(for: .milliseconds(350))
             guard !Task.isCancelled else { return }
-            if let found = try? await Transit.suggest(text), !Task.isCancelled {
-                stations = found.filter { $0.kind == "station" }
+            if stations.isEmpty { suggestNote = "検索中…" }
+            do {
+                let found = try await Transit.suggest(text)
+                guard !Task.isCancelled else { return }
+                stations = found
+                suggestNote = found.isEmpty ? "駅が見つかりませんでした" : nil
+            } catch {
+                guard !Task.isCancelled, !(error is CancellationError), (error as? URLError)?.code != .cancelled else { return }
+                stations = []
+                suggestNote = error.localizedDescription
             }
         }
         .task {
@@ -133,6 +144,16 @@ struct GoTransitSheet: View {
             .listStyle(.plain)
             .scrollDismissesKeyboard(.immediately)
             .disabled(loading)
+            .overlay(alignment: .top) {
+                if stations.isEmpty, let suggestNote {
+                    Text(suggestNote)
+                        .font(.system(size: 14))
+                        .foregroundStyle(.secondary)
+                        .multilineTextAlignment(.center)
+                        .padding(.horizontal, 24)
+                        .padding(.top, 24)
+                }
+            }
         }
     }
 

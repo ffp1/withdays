@@ -62,6 +62,17 @@ enum Transit {
     }
 
     private struct Places: Decodable { let places: [Place] }
+    private struct Stations: Decodable {
+        struct Station: Decodable {
+            let id: String
+            let name: String
+            let lat: Double?
+            let lon: Double?
+            let kind: String?
+            let feedName: String?
+        }
+        let stations: [Station]
+    }
     private struct Plan: Decodable {
         let date: String
         let journeys: [Journey]
@@ -71,8 +82,18 @@ enum Transit {
         let error: Detail
     }
 
+    /// Stations matching the query. The place search comes first; when it fails or finds no station,
+    /// the station-only search fills in.
     static func suggest(_ query: String) async throws -> [Place] {
-        try await get("places/suggest", [URLQueryItem(name: "q", value: query), URLQueryItem(name: "limit", value: "12")], as: Places.self).places
+        let items = [URLQueryItem(name: "q", value: query), URLQueryItem(name: "limit", value: "12")]
+        if let places = try? await get("places/suggest", items, as: Places.self).places.filter({ $0.kind == "station" }),
+           !places.isEmpty {
+            return places
+        }
+        return try await get("locations/suggest", items, as: Stations.self).stations.compactMap { station in
+            guard let lat = station.lat, let lon = station.lon, station.kind != "stop" else { return nil }
+            return Place(id: station.id, endpoint: "geo:\(lat),\(lon)", name: station.name, kind: "station", description: station.feedName)
+        }
     }
 
     /// Ways from here to the place whose first train leaves after `start`, quickest first. The walk to the
@@ -147,7 +168,8 @@ enum Transit {
     private static func get<T: Decodable>(_ path: String, _ query: [URLQueryItem], as type: T.Type) async throws -> T {
         var components = URLComponents(url: base.appending(path: path), resolvingAgainstBaseURL: false)!
         components.queryItems = query
-        let (data, response) = try await URLSession.shared.data(from: components.url!)
+        let request = URLRequest(url: components.url!, timeoutInterval: 15)
+        let (data, response) = try await URLSession.shared.data(for: request)
         guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
             let message = (try? JSONDecoder().decode(ErrorBody.self, from: data))?.error.message
             throw Failure(message: message ?? "経路を取得できませんでした")
