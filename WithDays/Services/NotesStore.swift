@@ -114,18 +114,21 @@ final class NotesStore {
         return note
     }
 
-    /// A note with the image on its first page.
+    /// A note from photos or scans: one page for each, the image's own shape.
     @discardableResult
-    func importImage(_ data: Data, folder: String?) throws -> Note {
-        let note = addNote(name: "画像", folder: folder, paper: .plain)
+    func importImages(_ images: [UIImage], name: String, folder: String?) throws -> Note {
+        guard !images.isEmpty else { throw Failure(message: "画像を読み込めませんでした") }
+        let id = NotesData.newID("note")
         do {
-            let file = try storeImage(data, noteID: note.id, pageID: note.pages[0].id)
-            mutate(note.id) { $0.pages[0].image = file }
+            let pages = try images.map { try imagePage($0, noteID: id) }
+            let note = Note(id: id, name: name, folder: folder, pages: pages, paper: .plain, pdf: nil, created: .now, updated: .now)
+            state.notes.append(note)
+            persist()
+            return note
         } catch {
-            delete(note.id)
+            removeFiles(of: id)
             throw error
         }
-        return self.note(note.id) ?? note
     }
 
     // MARK: Pages
@@ -139,19 +142,18 @@ final class NotesStore {
         return page
     }
 
-    /// A page with the image under the handwriting, after `index`.
-    @discardableResult
-    func addImagePage(_ data: Data, to noteID: String, after index: Int) throws -> NotePage {
-        var page = NotePage(id: NotesData.newID("page"), paper: .plain)
-        page.image = try storeImage(data, noteID: noteID, pageID: page.id)
-        mutate(noteID) { $0.pages.insert(page, at: min(index + 1, $0.pages.count)) }
-        return page
+    /// Pages with the images under the handwriting, after `index`, each the image's own shape.
+    func addImagePages(_ images: [UIImage], to noteID: String, after index: Int) throws {
+        guard !images.isEmpty else { throw Failure(message: "画像を読み込めませんでした") }
+        let pages = try images.map { try imagePage($0, noteID: noteID) }
+        mutate(noteID) { $0.pages.insert(contentsOf: pages, at: min(index + 1, $0.pages.count)) }
     }
 
     /// A note keeps at least one page; deleting the last one leaves a blank page.
     func deletePage(_ pageID: String, from noteID: String) {
         guard let note = note(noteID), let page = note.pages.first(where: { $0.id == pageID }) else { return }
         try? FileManager.default.removeItem(at: NotesData.drawingURL(noteID, pageID))
+        try? FileManager.default.removeItem(at: NotesData.itemsURL(noteID, pageID))
         if let image = page.image { try? FileManager.default.removeItem(at: NotesData.folder(of: noteID).appending(path: image)) }
         mutate(noteID) { note in
             note.pages.removeAll { $0.id == pageID }
@@ -178,6 +180,25 @@ final class NotesStore {
 
     func saveDrawing(_ drawing: PKDrawing, _ noteID: String, _ pageID: String) {
         try? drawing.dataRepresentation().write(to: NotesData.drawingURL(noteID, pageID), options: .atomic)
+        mutate(noteID) { $0.updated = .now }
+    }
+
+    /// The page's tapes and text boxes.
+    func items(_ noteID: String, _ pageID: String) -> NoteItems {
+        guard let data = try? Data(contentsOf: NotesData.itemsURL(noteID, pageID)),
+              let items = try? JSONDecoder().decode(NoteItems.self, from: data) else {
+            return NoteItems()
+        }
+        return items
+    }
+
+    func saveItems(_ items: NoteItems, _ noteID: String, _ pageID: String) {
+        let url = NotesData.itemsURL(noteID, pageID)
+        if items.isEmpty {
+            try? FileManager.default.removeItem(at: url)
+        } else if let data = try? JSONEncoder().encode(items) {
+            try? data.write(to: url, options: .atomic)
+        }
         mutate(noteID) { $0.updated = .now }
     }
 
@@ -212,6 +233,7 @@ final class NotesStore {
         format.opaque = true
         let rect = CGRect(origin: .zero, size: page.size)
         let strokes = drawing(note.id, page.id)
+        let overlay = items(note.id, page.id)
         let pdf = pdfPage(for: page, in: note)
         let image = image(for: page, in: note)
         return UIGraphicsImageRenderer(size: page.size, format: format).image { context in
@@ -224,6 +246,7 @@ final class NotesStore {
                 }
                 ink.draw(in: rect)
             }
+            NoteItemsRenderer.draw(overlay, in: context.cgContext)
         }
     }
 
@@ -237,12 +260,14 @@ final class NotesStore {
                 context.beginPage(withBounds: rect, pageInfo: [:])
                 NotePaperRenderer.draw(page, pdf: pdfPage(for: page, in: note), image: image(for: page, in: note), in: context.cgContext)
                 let strokes = drawing(note.id, page.id)
-                guard !strokes.strokes.isEmpty else { continue }
-                var ink = UIImage()
-                UITraitCollection(userInterfaceStyle: .light).performAsCurrent {
-                    ink = strokes.image(from: rect, scale: 3)
+                if !strokes.strokes.isEmpty {
+                    var ink = UIImage()
+                    UITraitCollection(userInterfaceStyle: .light).performAsCurrent {
+                        ink = strokes.image(from: rect, scale: 3)
+                    }
+                    ink.draw(in: rect)
                 }
-                ink.draw(in: rect)
+                NoteItemsRenderer.draw(items(note.id, page.id), in: context.cgContext)
             }
         }
         return url
@@ -266,11 +291,14 @@ final class NotesStore {
         return folder.appending(path: "\(safe.isEmpty ? "Note" : safe).\(ext)")
     }
 
-    /// Saves the image upright and no larger than needed, as a JPEG next to the strokes.
-    private func storeImage(_ data: Data, noteID: String, pageID: String) throws -> String {
-        guard let image = UIImage(data: data), image.size.width > 0, image.size.height > 0 else {
+    /// A page the image's shape (its long side an A4's), with the image saved upright and
+    /// no larger than needed as a JPEG next to the strokes.
+    private func imagePage(_ image: UIImage, noteID: String) throws -> NotePage {
+        guard image.size.width > 0, image.size.height > 0 else {
             throw Failure(message: "画像を読み込めませんでした")
         }
+        let pageID = NotesData.newID("page")
+        let fit = NotePage.a4.height / max(image.size.width, image.size.height)
         let limit: CGFloat = 2400
         let scale = min(1, limit / max(image.size.width * image.scale, image.size.height * image.scale))
         let size = CGSize(width: image.size.width * image.scale * scale, height: image.size.height * image.scale * scale)
@@ -282,7 +310,10 @@ final class NotesStore {
         guard let jpeg = upright.jpegData(compressionQuality: 0.85) else { throw Failure(message: "画像を読み込めませんでした") }
         let file = "\(pageID).jpg"
         try jpeg.write(to: NotesData.folder(of: noteID).appending(path: file), options: .atomic)
-        return file
+        return NotePage(
+            id: pageID, paper: .plain, image: file,
+            width: Double(image.size.width * fit), height: Double(image.size.height * fit)
+        )
     }
 
     private func removeFiles(of noteID: String) {

@@ -2,8 +2,10 @@ import PencilKit
 import PhotosUI
 import SwiftUI
 
-enum NoteTool: String {
-    case pen, marker, eraser, lasso
+enum NoteTool: String, CaseIterable, Identifiable {
+    case pen, marker, eraser, lasso, tape, text
+
+    var id: String { rawValue }
 
     var icon: String {
         switch self {
@@ -11,6 +13,24 @@ enum NoteTool: String {
         case .marker: "highlighter"
         case .eraser: "eraser"
         case .lasso: "lasso"
+        case .tape: "eye.slash"
+        case .text: "textformat"
+        }
+    }
+}
+
+/// The edge the toolbar sits on; on the sides it stands upright.
+enum NoteDock: String {
+    case top, bottom, left, right
+
+    var vertical: Bool { self == .left || self == .right }
+
+    var alignment: Alignment {
+        switch self {
+        case .top: .top
+        case .bottom: .bottom
+        case .left: .leading
+        case .right: .trailing
         }
     }
 }
@@ -22,6 +42,7 @@ struct NoteShare: Identifiable {
 }
 
 /// A note open for writing: one page at a time, turned with a two-finger swipe or the page buttons.
+/// The toolbar can be dragged by its grip to any edge.
 struct NoteEditorView: View {
     let noteID: String
 
@@ -33,25 +54,21 @@ struct NoteEditorView: View {
     @State private var forward = true
     @State private var controller = NoteCanvasController()
     @State private var tool = NoteTool.pen
+    @State private var settings = NoteToolSettings.load()
     @State private var showOptions = false
-    @AppStorage(SettingsKey.notesPenColor) private var penColor = 0x1C1C1E
-    @AppStorage(SettingsKey.notesPenWidth) private var penWidth = 3.0
-    @AppStorage(SettingsKey.notesMarkerColor) private var markerColor = 0xFFD60A
-    @AppStorage(SettingsKey.notesMarkerWidth) private var markerWidth = 16.0
-    /// The eraser removes whole strokes, or only what it touches.
-    @AppStorage(SettingsKey.notesEraserWhole) private var eraserWhole = true
+    /// How far the toolbar has been dragged from its edge.
+    @State private var dragOffset = CGSize.zero
 
     @State private var renaming = false
     @State private var name = ""
     @State private var confirmDelete = false
     @State private var showPhotos = false
     @State private var photo: PhotosPickerItem?
+    @State private var showScanner = false
     @State private var share: NoteShare?
     @State private var errorMessage: String?
 
-    static let colors = [0x1C1C1E, 0x8E8E93, 0xD12F2F, 0xF08C00, 0xFFD60A, 0x2FA84F, 0x1F7AE0, 0x7A4FD6, 0xE85D9E, 0x8B5A2B]
-    private static let penWidths = [1.5, 3.0, 5.0, 8.0]
-    private static let markerWidths = [10.0, 16.0, 24.0, 34.0]
+    private var dock: NoteDock { NoteDock(rawValue: settings.dock) ?? .bottom }
 
     var body: some View {
         if let note = notes.note(noteID) {
@@ -65,75 +82,118 @@ struct NoteEditorView: View {
     private func content(_ note: Note) -> some View {
         let current = min(index, note.pages.count - 1)
         let page = note.pages[current]
-        return VStack(spacing: 0) {
+        let main = VStack(spacing: 0) {
             topBar(note, page)
-            ZStack {
-                Color(uiColor: .systemGray5)
-                NoteCanvas(
-                    page: page,
-                    pdf: notes.pdfPage(for: page, in: note),
-                    image: notes.image(for: page, in: note),
-                    tool: pkTool,
-                    toolKey: toolKey,
-                    controller: controller,
-                    load: { notes.drawing(noteID, page.id) },
-                    save: { notes.saveDrawing($0, noteID, page.id) },
-                    onTurn: { turn($0, in: note) }
-                )
-                .id(page.id)
-                .transition(.asymmetric(
-                    insertion: .move(edge: forward ? .trailing : .leading),
-                    removal: .move(edge: forward ? .leading : .trailing)
-                ))
-            }
-            .clipped()
-            .ignoresSafeArea(edges: .bottom)
+            workspace(note, page, current)
         }
-        .overlay(alignment: .bottom) { bottomBar(note, current) }
         .background(Color(uiColor: .systemBackground))
+        // Typing in a text box: the page scrolls it clear of the keyboard itself.
+        .ignoresSafeArea(.keyboard)
+        .onChange(of: settings) { _, new in new.save() }
         .sensoryFeedback(.selection, trigger: tool)
         .sensoryFeedback(.impact(weight: .light), trigger: page.id)
-        .alert("ノートの名前", isPresented: $renaming) {
-            TextField("名前", text: $name)
-            Button("キャンセル", role: .cancel) {}
-            Button("OK") {
-                let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
-                if !trimmed.isEmpty { notes.rename(noteID, to: trimmed) }
-            }
-        }
-        .confirmationDialog("このページを削除します", isPresented: $confirmDelete, titleVisibility: .visible) {
-            Button("削除", role: .destructive) {
-                forward = false
-                withAnimation(.snappy) {
-                    notes.deletePage(page.id, from: noteID)
-                    index = max(0, min(current, note.pages.count - 2))
-                }
-            }
-        }
-        .photosPicker(isPresented: $showPhotos, selection: $photo, matching: .images)
-        .onChange(of: photo) { _, item in
-            guard let item else { return }
-            photo = nil
-            Task {
-                do {
-                    guard let data = try await item.loadTransferable(type: Data.self) else { return }
-                    controller.flush()
-                    try notes.addImagePage(data, to: noteID, after: current)
-                    forward = true
-                    withAnimation(.snappy) { index = current + 1 }
-                } catch {
-                    errorMessage = error.localizedDescription
-                }
-            }
-        }
-        .sheet(item: $share) { item in
-            ActivityView(items: [item.url])
-                .presentationDetents([.medium, .large])
-        }
-        .errorAlert($errorMessage)
+        .sensoryFeedback(.impact(weight: .medium), trigger: settings.dock)
+        return dialogs(imports(main, current), note, page, current)
     }
 
-    // MARK: Bars
+    /// The page, with the toolbar on its edge and the page buttons at the bottom.
+    private func workspace(_ note: Note, _ page: NotePage, _ current: Int) -> some View {
+        GeometryReader { geo in
+            // The page runs under the home indicator; the bars stay above it.
+            Color.clear
+                .background {
+                    ZStack {
+                        Color(uiColor: .systemGray5)
+                        canvas(note, page)
+                    }
+                    .ignoresSafeArea(edges: .bottom)
+                }
+            .overlay(alignment: .bottom) {
+                if dock != .bottom {
+                    pager(note, current)
+                        .padding(.bottom, 8)
+                }
+            }
+            .overlay(alignment: dock.alignment) { docked(note, current, geo.size) }
+            .coordinateSpace(.named("notes"))
+            .animation(.snappy(duration: 0.25), value: showOptions)
+        }
+    }
+
+    private func canvas(_ note: Note, _ page: NotePage) -> some View {
+        NoteCanvas(
+            page: page,
+            pdf: notes.pdfPage(for: page, in: note),
+            image: notes.image(for: page, in: note),
+            tool: tool,
+            settings: settings,
+            controller: controller,
+            load: { notes.drawing(noteID, page.id) },
+            save: { notes.saveDrawing($0, noteID, page.id) },
+            loadItems: { notes.items(noteID, page.id) },
+            saveItems: { notes.saveItems($0, noteID, page.id) },
+            onTurn: { turn($0, in: note) }
+        )
+        .id(page.id)
+        .transition(.asymmetric(
+            insertion: .move(edge: forward ? .trailing : .leading),
+            removal: .move(edge: forward ? .leading : .trailing)
+        ))
+    }
+
+    private func imports<V: View>(_ view: V, _ current: Int) -> some View {
+        view
+            .photosPicker(isPresented: $showPhotos, selection: $photo, matching: .images)
+            .onChange(of: photo) { _, item in
+                guard let item else { return }
+                photo = nil
+                Task {
+                    do {
+                        guard let data = try await item.loadTransferable(type: Data.self), let image = UIImage(data: data) else {
+                            throw NotesStore.Failure(message: "画像を読み込めませんでした")
+                        }
+                        addImages([image], after: current)
+                    } catch {
+                        errorMessage = error.localizedDescription
+                    }
+                }
+            }
+            .fullScreenCover(isPresented: $showScanner) {
+                DocumentScanner { images in
+                    showScanner = false
+                    if !images.isEmpty { addImages(images, after: current) }
+                }
+                .ignoresSafeArea()
+            }
+    }
+
+    private func dialogs<V: View>(_ view: V, _ note: Note, _ page: NotePage, _ current: Int) -> some View {
+        view
+            .alert("ノートの名前", isPresented: $renaming) {
+                TextField("名前", text: $name)
+                Button("キャンセル", role: .cancel) {}
+                Button("OK") {
+                    let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+                    if !trimmed.isEmpty { notes.rename(noteID, to: trimmed) }
+                }
+            }
+            .confirmationDialog("このページを削除します", isPresented: $confirmDelete, titleVisibility: .visible) {
+                Button("削除", role: .destructive) {
+                    forward = false
+                    withAnimation(.snappy) {
+                        notes.deletePage(page.id, from: noteID)
+                        index = max(0, min(current, note.pages.count - 2))
+                    }
+                }
+            }
+            .sheet(item: $share) { item in
+                ActivityView(items: [item.url])
+                    .presentationDetents([.medium, .large])
+            }
+            .errorAlert($errorMessage)
+    }
+
+    // MARK: Top bar
 
     private func topBar(_ note: Note, _ page: NotePage) -> some View {
         HStack(spacing: 6) {
@@ -158,36 +218,46 @@ struct NoteEditorView: View {
                 .disabled(!controller.canUndo)
             barButton("arrow.uturn.forward") { controller.redo() }
                 .disabled(!controller.canRedo)
-            Menu {
-                if page.pdfPage == nil, page.image == nil {
-                    Picker("用紙", selection: Binding(
-                        get: { page.paper },
-                        set: { notes.setPaper($0, page: page.id, in: noteID) }
-                    )) {
-                        ForEach(NotePaper.allCases) { Text($0.label).tag($0) }
-                    }
-                    .pickerStyle(.menu)
-                }
-                Button("画像のページを追加", systemImage: "photo") { showPhotos = true }
-                Divider()
-                Button("PDFで書き出し", systemImage: "doc") {
-                    export { try notes.exportPDF(note) }
-                }
-                Button("このページを画像で書き出し", systemImage: "square.and.arrow.up") {
-                    export { try notes.exportImage(page, in: note) }
-                }
-                Divider()
-                Button("このページを削除", systemImage: "trash", role: .destructive) { confirmDelete = true }
-            } label: {
-                Image(systemName: "ellipsis")
-                    .font(.system(size: 17, weight: .semibold))
-                    .foregroundStyle(Color.brand)
-                    .frame(width: 40, height: 40)
-                    .contentShape(Rectangle())
-            }
+            pageMenu(note, page)
         }
         .padding(.horizontal, 10)
         .frame(height: 48)
+    }
+
+    private func pageMenu(_ note: Note, _ page: NotePage) -> some View {
+        Menu {
+            if page.pdfPage == nil, page.image == nil {
+                Picker("用紙", selection: Binding(
+                    get: { page.paper },
+                    set: { notes.setPaper($0, page: page.id, in: noteID) }
+                )) {
+                    ForEach(NotePaper.allCases) { Text($0.label).tag($0) }
+                }
+                .pickerStyle(.menu)
+            }
+            Button("画像のページを追加", systemImage: "photo") { showPhotos = true }
+            if DocumentScanner.isSupported {
+                Button("書類をスキャン", systemImage: "doc.viewfinder") {
+                    controller.flush()
+                    showScanner = true
+                }
+            }
+            Divider()
+            Button("PDFで書き出し", systemImage: "doc") {
+                export { try notes.exportPDF(note) }
+            }
+            Button("このページを画像で書き出し", systemImage: "square.and.arrow.up") {
+                export { try notes.exportImage(page, in: note) }
+            }
+            Divider()
+            Button("このページを削除", systemImage: "trash", role: .destructive) { confirmDelete = true }
+        } label: {
+            Image(systemName: "ellipsis")
+                .font(.system(size: 17, weight: .semibold))
+                .foregroundStyle(Color.brand)
+                .frame(width: 40, height: 40)
+                .contentShape(Rectangle())
+        }
     }
 
     private func barButton(_ icon: String, action: @escaping () -> Void) -> some View {
@@ -200,19 +270,137 @@ struct NoteEditorView: View {
         .tint(Color.brand)
     }
 
-    /// The tools' options (when open), the page buttons, then the tools.
-    private func bottomBar(_ note: Note, _ current: Int) -> some View {
-        VStack(spacing: 10) {
-            if showOptions {
-                options
-                    .transition(.scale(scale: 0.9, anchor: .bottom).combined(with: .opacity))
+    // MARK: Toolbar
+
+    /// The toolbar on its edge, with the tool's options next to it when open.
+    /// At the bottom the page buttons sit between them.
+    @ViewBuilder
+    private func docked(_ note: Note, _ current: Int, _ size: CGSize) -> some View {
+        switch dock {
+        case .bottom:
+            VStack(spacing: 10) {
+                optionsPanel(anchor: .bottom)
+                pager(note, current)
+                toolbar(size)
             }
-            pager(note, current)
-            toolbar
+            .padding(.horizontal, 12)
+            .padding(.bottom, 8)
+        case .top:
+            VStack(spacing: 10) {
+                toolbar(size)
+                optionsPanel(anchor: .top)
+            }
+            .padding(.horizontal, 12)
+            .padding(.top, 8)
+        case .left:
+            HStack(spacing: 10) {
+                toolbar(size)
+                optionsPanel(anchor: .leading)
+            }
+            .padding(.horizontal, 8)
+        case .right:
+            HStack(spacing: 10) {
+                optionsPanel(anchor: .trailing)
+                toolbar(size)
+            }
+            .padding(.horizontal, 8)
         }
-        .padding(.horizontal, 16)
-        .padding(.bottom, 8)
-        .animation(.snappy(duration: 0.25), value: showOptions)
+    }
+
+    @ViewBuilder
+    private func optionsPanel(anchor: UnitPoint) -> some View {
+        if showOptions, tool != .lasso {
+            NoteToolOptions(tool: tool, settings: $settings)
+                .transition(.scale(scale: 0.9, anchor: anchor).combined(with: .opacity))
+        }
+    }
+
+    private func toolbar(_ size: CGSize) -> some View {
+        let vertical = dock.vertical
+        let layout = vertical ? AnyLayout(VStackLayout(spacing: 2)) : AnyLayout(HStackLayout(spacing: 2))
+        return layout {
+            grip(size)
+            ForEach(NoteTool.allCases) { toolButton($0) }
+            inkButton
+        }
+        .padding(vertical ? .vertical : .horizontal, 8)
+        .frame(width: vertical ? 52 : nil, height: vertical ? nil : 52)
+        .glassEffect(.regular, in: .capsule)
+        .offset(dragOffset)
+        .animation(.snappy(duration: 0.2), value: tool)
+    }
+
+    /// Dragging this moves the toolbar; let go and it settles on the nearest edge.
+    private func grip(_ size: CGSize) -> some View {
+        Image(systemName: "ellipsis")
+            .font(.system(size: 15, weight: .bold))
+            .foregroundStyle(.secondary)
+            .rotationEffect(.degrees(dock.vertical ? 0 : 90))
+            .frame(width: dock.vertical ? 40 : 22, height: dock.vertical ? 22 : 40)
+            .contentShape(Rectangle())
+            .gesture(
+                DragGesture(minimumDistance: 4, coordinateSpace: .named("notes"))
+                    .onChanged { value in
+                        showOptions = false
+                        dragOffset = value.translation
+                    }
+                    .onEnded { value in
+                        let point = value.location
+                        let edges: [(NoteDock, CGFloat)] = [
+                            (.left, point.x), (.right, size.width - point.x),
+                            (.top, point.y), (.bottom, size.height - point.y),
+                        ]
+                        let nearest = edges.min { $0.1 < $1.1 }?.0 ?? .bottom
+                        withAnimation(.spring(response: 0.35, dampingFraction: 0.8)) {
+                            settings.dock = nearest.rawValue
+                            dragOffset = .zero
+                        }
+                    }
+            )
+    }
+
+    private func toolButton(_ item: NoteTool) -> some View {
+        Button {
+            // Tapping the tool in use opens its options.
+            if tool == item {
+                if item != .lasso { showOptions.toggle() }
+            } else {
+                tool = item
+                showOptions = false
+            }
+        } label: {
+            Image(systemName: item.icon)
+                .font(.system(size: 18, weight: .semibold))
+                .foregroundStyle(tool == item ? Color.white : Color.primary)
+                .frame(width: 40, height: 40)
+                .background {
+                    if tool == item { Circle().fill(Color.brand) }
+                }
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+    }
+
+    /// The color in use; opens the options.
+    private var inkButton: some View {
+        let hex: Int = switch tool {
+        case .marker: settings.marker.color
+        case .tape: settings.tape.color
+        case .text: settings.text.color
+        default: settings.pen.color
+        }
+        return Button {
+            if tool == .eraser || tool == .lasso { tool = .pen }
+            showOptions.toggle()
+        } label: {
+            Circle()
+                .fill(Color(notesHex: hex))
+                .frame(width: 24, height: 24)
+                .overlay(Circle().strokeBorder(Color.primary.opacity(0.15), lineWidth: 1))
+                .frame(width: 40, height: 40)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
     }
 
     private func pager(_ note: Note, _ current: Int) -> some View {
@@ -251,136 +439,6 @@ struct NoteEditorView: View {
         .glassEffect(.regular, in: .capsule)
     }
 
-    private var toolbar: some View {
-        HStack(spacing: 2) {
-            ForEach([NoteTool.pen, .marker, .eraser, .lasso], id: \.self) { item in
-                Button {
-                    // Tapping the tool in use opens its options.
-                    if tool == item {
-                        if item != .lasso { showOptions.toggle() }
-                    } else {
-                        tool = item
-                        showOptions = false
-                    }
-                } label: {
-                    Image(systemName: item.icon)
-                        .font(.system(size: 20, weight: .semibold))
-                        .foregroundStyle(tool == item ? Color.white : Color.primary)
-                        .frame(width: 48, height: 44)
-                        .background {
-                            if tool == item { Capsule().fill(Color.brand) }
-                        }
-                        .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
-            }
-            Divider()
-                .frame(height: 24)
-                .padding(.horizontal, 6)
-            // The ink in use; opens the colors and widths.
-            Button {
-                if tool != .pen, tool != .marker { tool = .pen }
-                showOptions.toggle()
-            } label: {
-                Circle()
-                    .fill(Color(notesHex: tool == .marker ? markerColor : penColor))
-                    .frame(width: 26, height: 26)
-                    .overlay(Circle().strokeBorder(Color.primary.opacity(0.15), lineWidth: 1))
-                    .frame(width: 44, height: 44)
-                    .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-        }
-        .padding(.horizontal, 8)
-        .frame(height: 56)
-        .glassEffect(.regular, in: .capsule)
-        .animation(.snappy(duration: 0.2), value: tool)
-    }
-
-    @ViewBuilder
-    private var options: some View {
-        VStack(spacing: 12) {
-            switch tool {
-            case .pen:
-                colorRow($penColor)
-                widthRow($penWidth, Self.penWidths, scale: 2.2)
-            case .marker:
-                colorRow($markerColor)
-                widthRow($markerWidth, Self.markerWidths, scale: 0.7)
-            case .eraser:
-                Picker("消し方", selection: $eraserWhole) {
-                    Text("線ごと").tag(true)
-                    Text("なぞった所だけ").tag(false)
-                }
-                .pickerStyle(.segmented)
-            case .lasso:
-                EmptyView()
-            }
-        }
-        .padding(14)
-        .frame(maxWidth: 340)
-        .glassEffect(.regular, in: .rect(cornerRadius: 22))
-    }
-
-    private func colorRow(_ selection: Binding<Int>) -> some View {
-        HStack(spacing: 0) {
-            ForEach(Self.colors, id: \.self) { hex in
-                Button { selection.wrappedValue = hex } label: {
-                    Circle()
-                        .fill(Color(notesHex: hex))
-                        .frame(width: 22, height: 22)
-                        .overlay(Circle().strokeBorder(Color.primary.opacity(0.15), lineWidth: 1))
-                        .padding(3)
-                        .overlay {
-                            if selection.wrappedValue == hex { Circle().strokeBorder(Color.brand, lineWidth: 2) }
-                        }
-                        .frame(maxWidth: .infinity)
-                        .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
-            }
-        }
-    }
-
-    private func widthRow(_ selection: Binding<Double>, _ widths: [Double], scale: Double) -> some View {
-        HStack(spacing: 0) {
-            ForEach(widths, id: \.self) { width in
-                Button { selection.wrappedValue = width } label: {
-                    Circle()
-                        .fill(Color.primary)
-                        .frame(width: 4 + width * scale, height: 4 + width * scale)
-                        .frame(maxWidth: .infinity)
-                        .frame(height: 36)
-                        .background {
-                            if selection.wrappedValue == width { Capsule().fill(Color.brand.opacity(0.18)) }
-                        }
-                        .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
-            }
-        }
-    }
-
-    // MARK: Tools
-
-    private var pkTool: any PKTool {
-        switch tool {
-        case .pen: PKInkingTool(.pen, color: UIColor(notesHex: penColor), width: penWidth)
-        case .marker: PKInkingTool(.marker, color: UIColor(notesHex: markerColor), width: markerWidth)
-        case .eraser: eraserWhole ? PKEraserTool(.vector) : PKEraserTool(.bitmap, width: 20)
-        case .lasso: PKLassoTool()
-        }
-    }
-
-    private var toolKey: String {
-        switch tool {
-        case .pen: "pen-\(penColor)-\(penWidth)"
-        case .marker: "marker-\(markerColor)-\(markerWidth)"
-        case .eraser: "eraser-\(eraserWhole)"
-        case .lasso: "lasso"
-        }
-    }
-
     // MARK: Actions
 
     private func turn(_ step: Int, in note: Note) {
@@ -389,6 +447,18 @@ struct NoteEditorView: View {
         guard note.pages.indices.contains(target) else { return }
         forward = step > 0
         withAnimation(.snappy(duration: 0.3)) { index = target }
+    }
+
+    /// Photos or scans become pages after this one; the first of them is shown.
+    private func addImages(_ images: [UIImage], after current: Int) {
+        controller.flush()
+        do {
+            try notes.addImagePages(images, to: noteID, after: current)
+            forward = true
+            withAnimation(.snappy) { index = current + 1 }
+        } catch {
+            errorMessage = error.localizedDescription
+        }
     }
 
     private func export(_ make: () throws -> URL) {
@@ -410,22 +480,4 @@ struct ActivityView: UIViewControllerRepresentable {
     }
 
     func updateUIViewController(_ controller: UIActivityViewController, context: Context) {}
-}
-
-extension UIColor {
-    /// 0xRRGGBB, the same in light and dark: ink is always on white paper.
-    convenience init(notesHex hex: Int) {
-        self.init(
-            red: CGFloat((hex >> 16) & 0xFF) / 255,
-            green: CGFloat((hex >> 8) & 0xFF) / 255,
-            blue: CGFloat(hex & 0xFF) / 255,
-            alpha: 1
-        )
-    }
-}
-
-extension Color {
-    init(notesHex hex: Int) {
-        self.init(uiColor: UIColor(notesHex: hex))
-    }
 }

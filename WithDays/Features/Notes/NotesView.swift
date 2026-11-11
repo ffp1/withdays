@@ -2,7 +2,7 @@ import PhotosUI
 import SwiftUI
 import UniformTypeIdentifiers
 
-/// Notes: handwritten notes in folders. ＋ makes a note or a folder, or brings in a PDF / an image;
+/// Notes: handwritten notes in folders. ＋ makes a note or a folder, or brings in a PDF, an image or a scan;
 /// holding a note or a folder shows what can be done with it. The calendar button goes back to Cal.
 struct NotesView: View {
     var onCalendar: () -> Void
@@ -18,6 +18,7 @@ struct NotesView: View {
     @State private var importingPDF = false
     @State private var showPhotos = false
     @State private var photo: PhotosPickerItem?
+    @State private var showScanner = false
     @State private var prompt: NamePrompt?
     @State private var promptText = ""
     @State private var deletingFolder: NoteFolder?
@@ -147,14 +148,20 @@ struct NotesView: View {
                     errorMessage = error.localizedDescription
                 }
             }
+            .fullScreenCover(isPresented: $showScanner, onDismiss: openPending) {
+                DocumentScanner(onFinish: scanned)
+                    .ignoresSafeArea()
+            }
             .photosPicker(isPresented: $showPhotos, selection: $photo, matching: .images)
             .onChange(of: photo) { _, item in
                 guard let item else { return }
                 photo = nil
                 Task {
                     do {
-                        guard let data = try await item.loadTransferable(type: Data.self) else { return }
-                        openNext = try notes.importImage(data, folder: folder?.id).id
+                        guard let data = try await item.loadTransferable(type: Data.self), let image = UIImage(data: data) else {
+                            throw NotesStore.Failure(message: "画像を読み込めませんでした")
+                        }
+                        openNext = try notes.importImages([image], name: "画像", folder: folder?.id).id
                         try? await Task.sleep(for: .milliseconds(500))
                         openPending()
                     } catch {
@@ -162,6 +169,17 @@ struct NotesView: View {
                     }
                 }
             }
+    }
+
+    /// Scanned pages become a new note.
+    private func scanned(_ images: [UIImage]) {
+        showScanner = false
+        guard !images.isEmpty else { return }
+        do {
+            openNext = try notes.importImages(images, name: "スキャン", folder: folder?.id).id
+        } catch {
+            errorMessage = error.localizedDescription
+        }
     }
 
     private func openPending() {
@@ -262,6 +280,9 @@ struct NotesView: View {
             Divider()
             Button("PDFを取り込む", systemImage: "doc") { importingPDF = true }
             Button("画像を取り込む", systemImage: "photo") { showPhotos = true }
+            if DocumentScanner.isSupported {
+                Button("書類をスキャン", systemImage: "doc.viewfinder") { showScanner = true }
+            }
         } label: {
             Image(systemName: "plus")
                 .font(.system(size: 26.4, weight: .semibold))

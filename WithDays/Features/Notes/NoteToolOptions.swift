@@ -1,0 +1,172 @@
+import SwiftUI
+
+extension Color {
+    init(notesHex hex: Int) {
+        self.init(uiColor: UIColor(notesHex: hex))
+    }
+}
+
+/// The options of the tool in use: its colors, its width, and what else it can be set to.
+/// Presets are applied with a tap; holding one saves the current value into it.
+struct NoteToolOptions: View {
+    let tool: NoteTool
+    @Binding var settings: NoteToolSettings
+
+    var body: some View {
+        VStack(spacing: 12) {
+            switch tool {
+            case .pen:
+                NoteColorOptions(color: $settings.pen.color, presets: $settings.pen.colors)
+                NoteWidthOptions(width: $settings.pen.width, presets: $settings.pen.widths, range: 0.5...20, dot: { 3 + $0 * 1.2 })
+            case .marker:
+                NoteColorOptions(color: $settings.marker.color, presets: $settings.marker.colors)
+                NoteWidthOptions(width: $settings.marker.width, presets: $settings.marker.widths, range: 4...50, dot: { 4 + $0 * 0.45 })
+            case .tape:
+                NoteColorOptions(color: $settings.tape.color, presets: $settings.tape.colors)
+                NoteWidthOptions(width: $settings.tape.width, presets: $settings.tape.widths, range: 8...60, dot: { 4 + $0 * 0.4 })
+            case .text:
+                NoteColorOptions(color: $settings.text.color, presets: $settings.text.colors)
+                NoteWidthOptions(width: $settings.text.width, presets: $settings.text.widths, range: 8...72, dot: { 6 + $0 * 0.3 })
+                textExtras
+            case .eraser:
+                Picker("消し方", selection: $settings.eraserWhole) {
+                    Text("線ごと").tag(true)
+                    Text("なぞった所だけ").tag(false)
+                }
+                .pickerStyle(.segmented)
+                if !settings.eraserWhole {
+                    NoteWidthOptions(width: $settings.eraserWidth, presets: $settings.eraserWidths, range: 4...100, dot: { 4 + $0 * 0.25 })
+                }
+            case .lasso:
+                EmptyView()
+            }
+            if tool != .lasso, tool != .eraser || !settings.eraserWhole {
+                Text("プリセットは長押しで今の値を保存")
+                    .font(.system(size: 10))
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .padding(14)
+        .frame(maxWidth: 330)
+        .glassEffect(.regular, in: .rect(cornerRadius: 22))
+    }
+
+    /// Bold, and a fill behind the text.
+    private var textExtras: some View {
+        HStack(spacing: 10) {
+            Button { settings.textBold.toggle() } label: {
+                Image(systemName: "bold")
+                    .font(.system(size: 15, weight: .bold))
+                    .foregroundStyle(settings.textBold ? Color.white : Color.primary)
+                    .frame(width: 44, height: 32)
+                    .background(Capsule().fill(settings.textBold ? Color.brand : Color.primary.opacity(0.08)))
+            }
+            .buttonStyle(.plain)
+            Spacer()
+            Text("背景")
+                .font(.system(size: 13, weight: .bold))
+                .foregroundStyle(.secondary)
+            Toggle("背景", isOn: Binding(
+                get: { settings.textBackground != nil },
+                set: { settings.textBackground = $0 ? (settings.textBackground ?? 0xFFE066) : nil }
+            ))
+            .labelsHidden()
+            if let background = settings.textBackground {
+                ColorPicker("背景の色", selection: Binding(
+                    get: { Color(notesHex: background) },
+                    set: { settings.textBackground = UIColor($0).notesHex }
+                ), supportsOpacity: false)
+                .labelsHidden()
+            }
+        }
+    }
+}
+
+/// Ten color presets, then the system picker for any color at all.
+struct NoteColorOptions: View {
+    @Binding var color: Int
+    @Binding var presets: [Int]
+
+    @State private var saved = 0
+
+    var body: some View {
+        HStack(spacing: 0) {
+            ForEach(presets.indices, id: \.self) { index in
+                Circle()
+                    .fill(Color(notesHex: presets[index]))
+                    .frame(width: 20, height: 20)
+                    .overlay(Circle().strokeBorder(Color.primary.opacity(0.15), lineWidth: 1))
+                    .padding(3)
+                    .overlay {
+                        if presets[index] == color { Circle().strokeBorder(Color.brand, lineWidth: 2) }
+                    }
+                    .frame(maxWidth: .infinity)
+                    .frame(height: 32)
+                    .contentShape(Rectangle())
+                    .onTapGesture { color = presets[index] }
+                    .onLongPressGesture(minimumDuration: 0.45) {
+                        presets[index] = color
+                        saved += 1
+                    }
+            }
+            ColorPicker("色を作る", selection: Binding(
+                get: { Color(notesHex: color) },
+                set: { color = UIColor($0).notesHex }
+            ), supportsOpacity: false)
+            .labelsHidden()
+            .padding(.leading, 6)
+        }
+        .sensoryFeedback(.success, trigger: saved)
+    }
+}
+
+/// A slider for any width, and four presets.
+struct NoteWidthOptions: View {
+    @Binding var width: Double
+    @Binding var presets: [Double]
+    let range: ClosedRange<Double>
+    /// How big a dot shows this width.
+    let dot: (Double) -> Double
+
+    @State private var saved = 0
+
+    var body: some View {
+        VStack(spacing: 8) {
+            HStack(spacing: 10) {
+                Circle()
+                    .fill(Color.primary)
+                    .frame(width: dot(width), height: dot(width))
+                    .frame(width: 34, height: 34)
+                Slider(value: $width, in: range)
+                Text(width.formatted(.number.precision(.fractionLength(1))))
+                    .font(.system(size: 13, weight: .bold))
+                    .monospacedDigit()
+                    .foregroundStyle(.secondary)
+                    .frame(width: 40, alignment: .trailing)
+            }
+            HStack(spacing: 8) {
+                ForEach(presets.indices, id: \.self) { index in
+                    let selected = abs(presets[index] - width) < 0.05
+                    HStack(spacing: 6) {
+                        Circle()
+                            .fill(Color.primary)
+                            .frame(width: min(dot(presets[index]), 22), height: min(dot(presets[index]), 22))
+                        Text(presets[index].formatted(.number.precision(.fractionLength(0...1))))
+                            .font(.system(size: 12, weight: .bold))
+                            .monospacedDigit()
+                    }
+                    .frame(maxWidth: .infinity)
+                    .frame(height: 34)
+                    .background(Capsule().fill(selected ? Color.brand.opacity(0.18) : Color.primary.opacity(0.06)))
+                    .contentShape(Rectangle())
+                    .onTapGesture { width = presets[index] }
+                    .onLongPressGesture(minimumDuration: 0.45) {
+                        presets[index] = (width * 10).rounded() / 10
+                        saved += 1
+                    }
+                }
+            }
+        }
+        .sensoryFeedback(.success, trigger: saved)
+    }
+}
