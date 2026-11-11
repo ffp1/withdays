@@ -78,6 +78,15 @@ final class NoteOverlayView: UIView, UITextViewDelegate, UIGestureRecognizerDele
         }
     }
 
+    /// Every tape is out of sight for now (to read what's under them): not drawn, not touched.
+    var tapesHidden = false {
+        didSet {
+            guard tapesHidden != oldValue else { return }
+            if tapesHidden, !selection.tapes.isEmpty { selection.tapes = [] }
+            layoutItems()
+        }
+    }
+
     var tapeWidth = 22.0
     var tapeColor = 0xFFA94D
     var textStyle = NoteTextStyle(size: 16, color: 0x1C1C1E, bold: false, background: nil) {
@@ -208,6 +217,7 @@ final class NoteOverlayView: UIView, UITextViewDelegate, UIGestureRecognizerDele
                 tapeLayers[tape.id] = shape
                 return shape
             }()
+            shape.isHidden = tapesHidden
             // Later tapes lie over earlier ones.
             shape.zPosition = CGFloat(order)
             let path = UIBezierPath()
@@ -341,7 +351,7 @@ final class NoteOverlayView: UIView, UITextViewDelegate, UIGestureRecognizerDele
 
     /// The eraser passing over a tape or a text box removes it. The caller marks the change.
     func erase(at point: CGPoint) {
-        let tapes = items.tapes.filter { !Self.hit($0, point, slack: 4) }
+        let tapes = tapesHidden ? items.tapes : items.tapes.filter { !Self.hit($0, point, slack: 4) }
         let texts = items.texts.filter { !(textFrame($0.id)?.contains(point) ?? false) }
         guard tapes.count != items.tapes.count || texts.count != items.texts.count else { return }
         items.tapes = tapes
@@ -450,7 +460,7 @@ final class NoteOverlayView: UIView, UITextViewDelegate, UIGestureRecognizerDele
             break
         case .tape:
             // Peel back / put back the topmost tape here.
-            guard let index = items.tapes.lastIndex(where: { Self.hit($0, point, slack: 2) }) else { return }
+            guard !tapesHidden, let index = items.tapes.lastIndex(where: { Self.hit($0, point, slack: 2) }) else { return }
             items.tapes[index].revealed.toggle()
             UISelectionFeedbackGenerator().selectionChanged()
             layoutItems()
@@ -490,6 +500,7 @@ final class NoteOverlayView: UIView, UITextViewDelegate, UIGestureRecognizerDele
             case .none:
                 break
             case .tape:
+                guard !tapesHidden else { return }
                 let id = NotesData.newID("tape")
                 host?.beginChange()
                 items.tapes.append(NoteTape(
@@ -643,7 +654,7 @@ final class NoteOverlayView: UIView, UITextViewDelegate, UIGestureRecognizerDele
 
     /// The topmost thing under a tap: a tape, a text box, or a stroke.
     private func single(at point: CGPoint) -> Selection {
-        if let tape = items.tapes.last(where: { Self.hit($0, point, slack: 2) }) {
+        if !tapesHidden, let tape = items.tapes.last(where: { Self.hit($0, point, slack: 2) }) {
             return Selection(tapes: [tape.id])
         }
         if let text = text(at: point) {
@@ -672,7 +683,7 @@ final class NoteOverlayView: UIView, UITextViewDelegate, UIGestureRecognizerDele
             let inside = points.filter { Self.contains(polygon, $0) }.count
             if Double(inside) >= Double(points.count) * 0.6 { found.strokes.insert(index) }
         }
-        for tape in items.tapes {
+        for tape in items.tapes where !tapesHidden {
             let middle = CGPoint(x: (tape.x1 + tape.x2) / 2, y: (tape.y1 + tape.y2) / 2)
             if Self.contains(polygon, middle) { found.tapes.insert(tape.id) }
         }

@@ -19,7 +19,7 @@ struct NoteToolOptions: View {
             switch tool {
             case .pen:
                 NoteColorOptions(color: $settings.pen.color, presets: $settings.pen.colors)
-                NoteWidthOptions(width: $settings.pen.width, presets: $settings.pen.widths, range: 0.5...20, dot: { 3 + $0 * 1.2 })
+                NoteWidthOptions(width: $settings.pen.width, presets: $settings.pen.widths, range: 0.1...20, dot: { 2 + $0 * 1.25 })
             case .marker:
                 NoteColorOptions(color: $settings.marker.color, presets: $settings.marker.colors)
                 NoteWidthOptions(width: $settings.marker.width, presets: $settings.marker.widths, range: 4...50, dot: { 4 + $0 * 0.45 })

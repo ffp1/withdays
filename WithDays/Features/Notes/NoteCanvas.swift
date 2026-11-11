@@ -59,11 +59,17 @@ final class NoteCanvasController {
 }
 
 extension NoteToolSettings {
+    /// The width PencilKit draws with: it has a thinnest width for each ink, and thinner strokes
+    /// are thinned to the asked-for width once they're drawn.
+    static func toolWidth(_ width: Double, _ ink: PKInkingTool.InkType) -> CGFloat {
+        max(CGFloat(width), ink.validWidthRange.lowerBound)
+    }
+
     /// The PencilKit tool for the pen, highlighter and eraser; selecting, tape and text aren't PencilKit's.
     func pkTool(_ tool: NoteTool) -> (any PKTool)? {
         switch tool {
-        case .pen: PKInkingTool(.pen, color: UIColor(notesHex: pen.color), width: pen.width)
-        case .marker: PKInkingTool(.marker, color: UIColor(notesHex: marker.color), width: marker.width)
+        case .pen: PKInkingTool(.pen, color: UIColor(notesHex: pen.color), width: Self.toolWidth(pen.width, .pen))
+        case .marker: PKInkingTool(.marker, color: UIColor(notesHex: marker.color), width: Self.toolWidth(marker.width, .marker))
         case .eraser: eraserWhole ? PKEraserTool(.vector) : PKEraserTool(.bitmap, width: eraserWidth)
         case .select, .tape, .text: nil
         }
@@ -79,6 +85,8 @@ struct NoteCanvas: UIViewRepresentable {
     let image: UIImage?
     let tool: NoteTool
     let settings: NoteToolSettings
+    /// Every tape is out of sight (and out of reach) for now.
+    let hideTapes: Bool
     let controller: NoteCanvasController
     var load: () -> PKDrawing
     var save: (PKDrawing) -> Void
@@ -104,6 +112,7 @@ struct NoteCanvas: UIViewRepresentable {
         view.onTurn = { [weak coordinator] in coordinator?.parent.onTurn($0) }
         view.onHistory = { [weak coordinator] in coordinator?.parent.controller.refresh() }
         view.apply(tool: tool, settings: settings)
+        view.overlay.tapesHidden = hideTapes
         coordinator.applied = Applied(tool: tool, settings: settings)
 
         let pan = UIPanGestureRecognizer(target: coordinator, action: #selector(Coordinator.twoFingerPan(_:)))
@@ -126,6 +135,7 @@ struct NoteCanvas: UIViewRepresentable {
             context.coordinator.applied = applied
             view.apply(tool: tool, settings: settings)
         }
+        view.overlay.tapesHidden = hideTapes
         view.update(page: page)
     }
 
@@ -275,6 +285,8 @@ final class NotePageView: UIView, UIGestureRecognizerDelegate, NoteOverlayHost {
         let type: PKInkingTool.InkType
         let color: UIColor
         let width: CGFloat
+        /// What PencilKit draws with; wider than `width` when that's thinner than the ink allows.
+        let toolWidth: CGFloat
     }
 
     private var lineInk: LineInk?
@@ -398,9 +410,15 @@ final class NotePageView: UIView, UIGestureRecognizerDelegate, NoteOverlayHost {
 
         switch tool {
         case .pen:
-            lineInk = LineInk(type: .pen, color: UIColor(notesHex: settings.pen.color), width: CGFloat(settings.pen.width))
+            lineInk = LineInk(
+                type: .pen, color: UIColor(notesHex: settings.pen.color), width: CGFloat(settings.pen.width),
+                toolWidth: NoteToolSettings.toolWidth(settings.pen.width, .pen)
+            )
         case .marker:
-            lineInk = LineInk(type: .marker, color: UIColor(notesHex: settings.marker.color), width: CGFloat(settings.marker.width))
+            lineInk = LineInk(
+                type: .marker, color: UIColor(notesHex: settings.marker.color), width: CGFloat(settings.marker.width),
+                toolWidth: NoteToolSettings.toolWidth(settings.marker.width, .marker)
+            )
         default:
             lineInk = nil
         }
@@ -449,7 +467,31 @@ final class NotePageView: UIView, UIGestureRecognizerDelegate, NoteOverlayHost {
     /// PencilKit changed the strokes. While a finger is down or a change is marked, that waits for its end.
     func drawingChanged() {
         guard !inChange, !restoring, !touching else { return }
+        thinNewStrokes()
         commit()
+    }
+
+    /// Strokes just drawn with a width thinner than PencilKit's thinnest are redrawn at the width asked for.
+    private func thinNewStrokes() {
+        guard let ink = lineInk, ink.width < ink.toolWidth - 0.01 else { return }
+        var strokes = canvas.drawing.strokes
+        let known = current.drawing.strokes.count
+        guard strokes.count > known else { return }
+        let factor = ink.width / ink.toolWidth
+        for index in known..<strokes.count where strokes[index].ink.inkType == ink.type {
+            let path = strokes[index].path
+            let points = path.map { point in
+                PKStrokePoint(
+                    location: point.location, timeOffset: point.timeOffset,
+                    size: CGSize(width: point.size.width * factor, height: point.size.height * factor),
+                    opacity: point.opacity, force: point.force, azimuth: point.azimuth, altitude: point.altitude
+                )
+            }
+            strokes[index].path = PKStrokePath(controlPoints: points, creationDate: path.creationDate)
+        }
+        restoring = true
+        canvas.drawing = PKDrawing(strokes: strokes)
+        restoring = false
     }
 
     /// Makes what's on the page now a step, if it differs from the last one.
@@ -471,11 +513,13 @@ final class NotePageView: UIView, UIGestureRecognizerDelegate, NoteOverlayHost {
 
     private func show(_ state: PageState) {
         restoring = true
-        canvas.drawing = state.drawing
+        // A new drawing with the same strokes, not the old one itself: a drawing remembers where it came from,
+        // and the canvas would merge the strokes that were undone back in with the next stroke drawn.
+        canvas.drawing = PKDrawing(strokes: state.drawing.strokes)
         overlay.replace(state.items)
         restoring = false
         let itemsChanged = state.items != current.items
-        current = state
+        current = PageState(drawing: canvas.drawing, items: state.items)
         if itemsChanged { onSaveItems(state.items) }
         onHistory()
     }
@@ -524,7 +568,7 @@ final class NotePageView: UIView, UIGestureRecognizerDelegate, NoteOverlayHost {
         // The whole page fits, with a little room around it.
         let fit = min((bounds.width - 24) / page.size.width, (bounds.height - 24) / page.size.height)
         canvas.minimumZoomScale = fit
-        canvas.maximumZoomScale = max(fit * 6, 3)
+        canvas.maximumZoomScale = max(fit * 24, 12)
         if first {
             canvas.contentSize = page.size
             canvas.zoomScale = fit
@@ -548,8 +592,11 @@ final class NotePageView: UIView, UIGestureRecognizerDelegate, NoteOverlayHost {
         if abs(canvas.contentSize.width - size.width) > 0.5 || abs(canvas.contentSize.height - size.height) > 0.5 {
             canvas.contentSize = size
         }
-        let horizontal = max(0, (bounds.width - size.width) / 2)
-        let vertical = max(0, (bounds.height - size.height) / 2)
+        // Zoomed in, there's room past the page's edges, so any part of it (a corner too) can sit mid-screen.
+        // The room grows in as the zoom leaves the whole-page fit, so nothing jumps.
+        let zoomedIn = min(max((zoom / max(canvas.minimumZoomScale, 0.01) - 1) / 0.5, 0), 1)
+        let horizontal = max((bounds.width - size.width) / 2, bounds.width * 0.45 * zoomedIn, 0)
+        let vertical = max((bounds.height - size.height) / 2, bounds.height * 0.45 * zoomedIn, 0)
         canvas.contentInset = UIEdgeInsets(top: vertical, left: horizontal, bottom: max(vertical, keyboardInset), right: horizontal)
         paper.transform = CGAffineTransform(scaleX: zoom, y: zoom)
         paper.layer.position = .zero
@@ -636,7 +683,14 @@ final class NotePageView: UIView, UIGestureRecognizerDelegate, NoteOverlayHost {
     private func touchEnded(lifted: Bool) {
         touching = false
         // Whatever the finger did (a stroke, erasing strokes and tapes) is one step.
-        defer { if !inChange { commit() } }
+        let straightened = vertices != nil
+        defer {
+            if !inChange {
+                // A straightened line is already the width asked for.
+                if !straightened { thinNewStrokes() }
+                commit()
+            }
+        }
         holdWork?.cancel()
         holdWork = nil
         if let swipe = marginSwipe {
@@ -740,7 +794,9 @@ final class NotePageView: UIView, UIGestureRecognizerDelegate, NoteOverlayHost {
         var strokes = canvas.drawing.strokes
         if strokes.count > strokeCount { strokes = Array(strokes.prefix(strokeCount)) }
         strokes.append(stroke)
+        restoring = true
         canvas.drawing = PKDrawing(strokes: strokes)
+        restoring = false
     }
 }
 

@@ -60,6 +60,8 @@ struct NoteEditorView: View {
     @State private var tool = NoteTool.pen
     @State private var settings = NoteToolSettings.load()
     @State private var showOptions = false
+    /// Every tape on every page is out of sight until this is turned off or the note is closed.
+    @State private var hideTapes = false
     /// The toolbar has been lifted by a hold, and how far it's been dragged.
     @State private var moving = false
     @State private var dragOffset = CGSize.zero
@@ -130,6 +132,13 @@ struct NoteEditorView: View {
                     }
                 }
                 .overlay(alignment: dock.alignment) { docked(note, current, geo.size) }
+                .overlay(alignment: .top) {
+                    if hideTapes, dock != .top {
+                        tapesHiddenBadge
+                            .padding(.top, 8)
+                            .transition(.move(edge: .top).combined(with: .opacity))
+                    }
+                }
                 .overlay {
                     if reading {
                         ProgressView("文字を認識中")
@@ -139,6 +148,7 @@ struct NoteEditorView: View {
                 }
                 .coordinateSpace(.named("notes"))
                 .animation(.snappy(duration: 0.25), value: showOptions)
+                .animation(.snappy(duration: 0.25), value: hideTapes)
                 .animation(.snappy(duration: 0.25), value: controller.hasSelection)
         }
     }
@@ -150,6 +160,7 @@ struct NoteEditorView: View {
             image: notes.image(for: page, in: note),
             tool: tool,
             settings: settings,
+            hideTapes: hideTapes,
             controller: controller,
             load: { notes.drawing(noteID, page.id) },
             save: { notes.saveDrawing($0, noteID, page.id) },
@@ -279,6 +290,7 @@ struct NoteEditorView: View {
                     showScanner = true
                 }
             }
+            Toggle("テープを一時的に隠す", systemImage: "eye", isOn: $hideTapes)
             Divider()
             Button("このページの文字を認識", systemImage: "text.viewfinder") { readPage(page, in: note) }
             Button("PDFで書き出し", systemImage: "doc") {
@@ -296,6 +308,19 @@ struct NoteEditorView: View {
                 .frame(width: 40, height: 40)
                 .contentShape(Rectangle())
         }
+    }
+
+    /// Shown while the tapes are hidden; a tap brings them back.
+    private var tapesHiddenBadge: some View {
+        Button { hideTapes = false } label: {
+            Label("テープを隠しています", systemImage: "eye")
+                .font(.system(size: 12, weight: .bold))
+                .foregroundStyle(.primary)
+                .padding(.horizontal, 12)
+                .frame(height: 30)
+                .glassEffect(.regular, in: .capsule)
+        }
+        .buttonStyle(.plain)
     }
 
     private func barButton(_ icon: String, action: @escaping () -> Void) -> some View {
@@ -432,6 +457,8 @@ struct NoteEditorView: View {
             } else {
                 tool = item
                 showOptions = false
+                // Tapes can't be laid or peeled while they're hidden.
+                if item == .tape { hideTapes = false }
             }
         } label: {
             Group {
