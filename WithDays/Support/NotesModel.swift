@@ -162,6 +162,21 @@ enum NotesData {
         folder(of: noteID).appending(path: "\(pageID).items.json")
     }
 
+    /// The text read from each page (by page ID), for searching.
+    private static var textsURL: URL { root.appending(path: "texts.json") }
+
+    static func loadTexts() -> [String: String] {
+        guard let data = try? Data(contentsOf: textsURL), let texts = try? JSONDecoder().decode([String: String].self, from: data) else {
+            return [:]
+        }
+        return texts
+    }
+
+    static func saveTexts(_ texts: [String: String]) {
+        guard let data = try? JSONEncoder().encode(texts) else { return }
+        try? data.write(to: textsURL, options: .atomic)
+    }
+
     static func load() -> NotesState {
         let decoder = JSONDecoder()
         decoder.dateDecodingStrategy = .iso8601

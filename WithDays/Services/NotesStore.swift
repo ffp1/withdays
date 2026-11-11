@@ -9,8 +9,14 @@ import SwiftUI
 final class NotesStore {
     private(set) var state = NotesData.load()
 
+    /// The text read from each page, by page ID; a page that isn't here hasn't been read yet (or has changed).
+    private(set) var pageTexts = NotesData.loadTexts()
+    /// How far reading the pages has got, while it's running.
+    private(set) var reading: (done: Int, total: Int)?
+
     @ObservationIgnored private var documents: [String: PDFDocument] = [:]
     @ObservationIgnored private let thumbnails = NSCache<NSString, UIImage>()
+    @ObservationIgnored private let pageThumbnails = NSCache<NSString, UIImage>()
 
     struct Failure: LocalizedError {
         let message: String
@@ -149,11 +155,37 @@ final class NotesStore {
         mutate(noteID) { $0.pages.insert(contentsOf: pages, at: min(index + 1, $0.pages.count)) }
     }
 
+    func movePage(in noteID: String, from source: Int, to destination: Int) {
+        mutate(noteID) { note in
+            guard note.pages.indices.contains(source), note.pages.indices.contains(destination), source != destination else { return }
+            note.pages.insert(note.pages.remove(at: source), at: destination)
+        }
+    }
+
+    /// A copy right after the page, with its handwriting, tapes, text boxes and image.
+    func duplicatePage(_ pageID: String, in noteID: String) {
+        guard let note = note(noteID), let index = note.pages.firstIndex(where: { $0.id == pageID }) else { return }
+        var copy = note.pages[index]
+        copy.id = NotesData.newID("page")
+        let folder = NotesData.folder(of: noteID)
+        let files = FileManager.default
+        try? files.copyItem(at: NotesData.drawingURL(noteID, pageID), to: NotesData.drawingURL(noteID, copy.id))
+        try? files.copyItem(at: NotesData.itemsURL(noteID, pageID), to: NotesData.itemsURL(noteID, copy.id))
+        if let image = copy.image {
+            let name = "\(copy.id).jpg"
+            try? files.copyItem(at: folder.appending(path: image), to: folder.appending(path: name))
+            copy.image = name
+        }
+        if let text = pageTexts[pageID] { pageTexts[copy.id] = text }
+        mutate(noteID) { $0.pages.insert(copy, at: index + 1) }
+    }
+
     /// A note keeps at least one page; deleting the last one leaves a blank page.
     func deletePage(_ pageID: String, from noteID: String) {
         guard let note = note(noteID), let page = note.pages.first(where: { $0.id == pageID }) else { return }
         try? FileManager.default.removeItem(at: NotesData.drawingURL(noteID, pageID))
         try? FileManager.default.removeItem(at: NotesData.itemsURL(noteID, pageID))
+        forgetText(of: pageID)
         if let image = page.image { try? FileManager.default.removeItem(at: NotesData.folder(of: noteID).appending(path: image)) }
         mutate(noteID) { note in
             note.pages.removeAll { $0.id == pageID }
@@ -167,6 +199,7 @@ final class NotesStore {
             note.paper = paper
             if let index = note.pages.firstIndex(where: { $0.id == pageID }) { note.pages[index].paper = paper }
         }
+        pageThumbnails.removeObject(forKey: pageID as NSString)
     }
 
     // MARK: Strokes and backgrounds
@@ -180,6 +213,7 @@ final class NotesStore {
 
     func saveDrawing(_ drawing: PKDrawing, _ noteID: String, _ pageID: String) {
         try? drawing.dataRepresentation().write(to: NotesData.drawingURL(noteID, pageID), options: .atomic)
+        forgetText(of: pageID)
         mutate(noteID) { $0.updated = .now }
     }
 
@@ -199,6 +233,7 @@ final class NotesStore {
         } else if let data = try? JSONEncoder().encode(items) {
             try? data.write(to: url, options: .atomic)
         }
+        forgetText(of: pageID)
         mutate(noteID) { $0.updated = .now }
     }
 
@@ -224,6 +259,68 @@ final class NotesStore {
         let image = render(page, in: note, scale: 240 / page.size.width)
         thumbnails.setObject(image, forKey: note.id as NSString)
         return image
+    }
+
+    /// One page, small, for the page list.
+    func thumbnail(of page: NotePage, in note: Note) -> UIImage {
+        if let cached = pageThumbnails.object(forKey: page.id as NSString) { return cached }
+        let image = render(page, in: note, scale: 200 / page.size.width)
+        pageThumbnails.setObject(image, forKey: page.id as NSString)
+        return image
+    }
+
+    // MARK: Text in pages
+
+    /// Notes whose name or pages contain the text, newest first, with the first page that has it.
+    func search(_ query: String) -> [(note: Note, page: Int?)] {
+        let needle = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !needle.isEmpty else { return [] }
+        let options: String.CompareOptions = [.caseInsensitive, .widthInsensitive]
+        return state.notes.sorted { $0.updated > $1.updated }.compactMap { note -> (note: Note, page: Int?)? in
+            if let page = note.pages.firstIndex(where: { pageTexts[$0.id]?.range(of: needle, options: options) != nil }) {
+                return (note, page)
+            }
+            return note.name.range(of: needle, options: options) != nil ? (note, nil) : nil
+        }
+    }
+
+    /// Reads the pages that haven't been read since they last changed, one at a time.
+    func readPages() async {
+        guard reading == nil else { return }
+        let waiting = state.notes.flatMap { note in
+            note.pages.filter { pageTexts[$0.id] == nil }.map { (note.id, $0.id) }
+        }
+        guard !waiting.isEmpty else { return }
+        reading = (0, waiting.count)
+        defer {
+            reading = nil
+            NotesData.saveTexts(pageTexts)
+        }
+        for (done, (noteID, pageID)) in waiting.enumerated() {
+            guard !Task.isCancelled else { return }
+            reading = (done, waiting.count)
+            // The note or page may have gone, or been read, in the meantime.
+            guard let note = note(noteID), let page = note.pages.first(where: { $0.id == pageID }), pageTexts[pageID] == nil else { continue }
+            pageTexts[pageID] = await text(of: page, in: note)
+            if done % 10 == 9 { NotesData.saveTexts(pageTexts) }
+            await Task.yield()
+        }
+    }
+
+    /// The text on a page: print in its PDF / image, handwriting, and text boxes.
+    func text(of page: NotePage, in note: Note) async -> String {
+        let blank = page.pdfPage == nil && page.image == nil
+            && drawing(note.id, page.id).strokes.isEmpty && items(note.id, page.id).texts.isEmpty
+        guard !blank else { return "" }
+        return await NoteOCR.recognize(render(page, in: note, scale: 2))
+    }
+
+    /// The page changed: what was read from it no longer holds.
+    private func forgetText(of pageID: String) {
+        pageThumbnails.removeObject(forKey: pageID as NSString)
+        guard pageTexts[pageID] != nil else { return }
+        pageTexts[pageID] = nil
+        NotesData.saveTexts(pageTexts)
     }
 
     /// The page with its handwriting; `scale` is pixels per point.

@@ -3,50 +3,76 @@ import PencilKit
 import SwiftUI
 import UIKit.UIGestureRecognizerSubclass
 
-/// Undo / redo for the page on screen, and saving it right away (before an export or leaving).
+/// The editor's handle on the page on screen: undo / redo, the selection and its actions,
+/// and saving right away (before an export or leaving).
 @MainActor
 @Observable
 final class NoteCanvasController {
     fileprivate(set) var canUndo = false
     fileprivate(set) var canRedo = false
-    @ObservationIgnored fileprivate weak var canvas: PKCanvasView?
+    fileprivate(set) var hasSelection = false
+    /// Handwriting is selected, so it can be read as text.
+    fileprivate(set) var hasSelectedStrokes = false
+    fileprivate(set) var canPaste = false
+    @ObservationIgnored fileprivate weak var page: NotePageView?
     @ObservationIgnored fileprivate var flushAction: (() -> Void)?
 
     func undo() {
-        canvas?.undoManager?.undo()
-        refresh()
+        page?.undo()
     }
 
     func redo() {
-        canvas?.undoManager?.redo()
-        refresh()
+        page?.redo()
     }
 
     func flush() {
         flushAction?()
     }
 
+    func perform(_ action: NoteSelectionAction) {
+        page?.overlay.perform(action)
+        refresh()
+    }
+
+    func paste() {
+        page?.overlay.paste()
+        refresh()
+    }
+
+    /// Reads the selected handwriting and puts a text box in its place; false when nothing could be read.
+    func selectionToText() async -> Bool {
+        guard let page, let (image, bounds) = page.overlay.selectedStrokesImage() else { return false }
+        let text = await NoteOCR.recognize(image).trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !text.isEmpty else { return false }
+        page.overlay.replaceSelectedStrokes(with: text, in: bounds)
+        refresh()
+        return true
+    }
+
     fileprivate func refresh() {
-        canUndo = canvas?.undoManager?.canUndo ?? false
-        canRedo = canvas?.undoManager?.canRedo ?? false
+        canUndo = page?.canvas.undoManager?.canUndo ?? false
+        canRedo = page?.canvas.undoManager?.canRedo ?? false
+        hasSelection = !(page?.overlay.selection.isEmpty ?? true)
+        hasSelectedStrokes = !(page?.overlay.selection.strokes.isEmpty ?? true)
+        canPaste = NoteClipboard.clip != nil
     }
 }
 
 extension NoteToolSettings {
-    /// The PencilKit tool for the pen, highlighter, eraser and lasso; tape and text aren't PencilKit's.
+    /// The PencilKit tool for the pen, highlighter and eraser; selecting, tape and text aren't PencilKit's.
     func pkTool(_ tool: NoteTool) -> (any PKTool)? {
         switch tool {
         case .pen: PKInkingTool(.pen, color: UIColor(notesHex: pen.color), width: pen.width)
         case .marker: PKInkingTool(.marker, color: UIColor(notesHex: marker.color), width: marker.width)
         case .eraser: eraserWhole ? PKEraserTool(.vector) : PKEraserTool(.bitmap, width: eraserWidth)
-        case .lasso: PKLassoTool()
-        case .tape, .text: nil
+        case .select, .tape, .text: nil
         }
     }
 }
 
 /// One page to write on with a finger: one finger draws, two fingers scroll and pinch to zoom,
-/// and a two-finger sideways swipe on the whole page turns it.
+/// and a two-finger sideways swipe on the whole page (or one finger beside the page) turns it.
+/// A two-finger tap undoes, a three-finger tap redoes.
 struct NoteCanvas: UIViewRepresentable {
     let page: NotePage
     let pdf: PDFPage?
@@ -73,7 +99,9 @@ struct NoteCanvas: UIViewRepresentable {
         view.canvas.drawing = load()
         coordinator.loading = false
         view.canvas.delegate = coordinator
-        view.overlay.onChange = { [weak coordinator] in coordinator?.parent.saveItems($0) }
+        view.onSaveItems = { [weak coordinator] in coordinator?.parent.saveItems($0) }
+        view.onTurn = { [weak coordinator] in coordinator?.parent.onTurn($0) }
+        view.onHistory = { [weak coordinator] in coordinator?.parent.controller.refresh() }
         view.apply(tool: tool, settings: settings)
         coordinator.applied = Applied(tool: tool, settings: settings)
 
@@ -83,7 +111,7 @@ struct NoteCanvas: UIViewRepresentable {
         pan.delegate = coordinator
         view.addGestureRecognizer(pan)
 
-        controller.canvas = view.canvas
+        controller.page = view
         controller.flushAction = { [weak coordinator] in coordinator?.flush() }
         controller.refresh()
         return view
@@ -164,8 +192,8 @@ struct NoteCanvas: UIViewRepresentable {
     }
 }
 
-/// Follows one finger on the canvas without getting in PencilKit's way, for straightening a held stroke
-/// and for the eraser to reach tapes and text boxes.
+/// Follows one finger on the canvas without getting in PencilKit's way, for straightening a held stroke,
+/// for the eraser to reach tapes and text boxes, and for swiping beside the page.
 private final class NoteTouchTracker: UIGestureRecognizer {
     var onBegan: (CGPoint) -> Void = { _ in }
     var onMoved: (CGPoint) -> Void = { _ in }
@@ -217,11 +245,16 @@ private final class NoteTouchTracker: UIGestureRecognizer {
     }
 }
 
-/// The PencilKit canvas with the paper under it and the tapes / text boxes over it.
+/// The PencilKit canvas with the paper under it and the tapes / text boxes / selection over it.
 /// The canvas scrolls and zooms; the paper and the overlay follow.
-final class NotePageView: UIView, UIGestureRecognizerDelegate {
+final class NotePageView: UIView, UIGestureRecognizerDelegate, NoteOverlayHost {
     let canvas = PKCanvasView()
     let overlay: NoteOverlayView
+    var onSaveItems: (NoteItems) -> Void = { _ in }
+    var onTurn: (Int) -> Void = { _ in }
+    /// Undo / redo or the selection changed.
+    var onHistory: () -> Void = {}
+
     private let paper: NotePaperView
     private var page: NotePage
     private var laidOut = CGSize.zero
@@ -237,14 +270,26 @@ final class NotePageView: UIView, UIGestureRecognizerDelegate {
     private var lineInk: LineInk?
     private var erasesItems = false
 
-    // One finger's stroke, as the tracker sees it (in page points).
-    private var strokeStart: CGPoint?
-    private var strokeEnd = CGPoint.zero
+    // One finger, as the tracker sees it. Points are in page points unless said otherwise.
+    private var strokePoints: [CGPoint] = []
     private var strokeCount = 0
     private var travelled: CGFloat = 0
     private var holdAnchor = CGPoint.zero
     private var holdWork: DispatchWorkItem?
-    private var straightening = false
+    /// The corners of the straightened stroke; the last one follows the finger.
+    private var vertices: [CGPoint]?
+    /// Where a swipe beside the page began and has got to, in the canvas's coordinates.
+    private var marginSwipe: (start: CGPoint, now: CGPoint)?
+    private var erasing = false
+
+    /// The strokes, tapes and text boxes before a change, to undo it as one step.
+    private struct PageState {
+        /// nil when only the tapes / text boxes are put back (the eraser: PencilKit undoes its own strokes).
+        let drawing: PKDrawing?
+        let items: NoteItems
+    }
+
+    private var changeBase: PageState?
 
     init(page: NotePage, pdf: PDFPage?, image: UIImage?, items: NoteItems) {
         self.page = page
@@ -265,7 +310,9 @@ final class NotePageView: UIView, UIGestureRecognizerDelegate {
         canvas.insertSubview(paper, at: 0)
         canvas.addSubview(overlay)
 
+        overlay.host = self
         overlay.onEditingFrame = { [weak self] frame in self?.reveal(frame) }
+        overlay.onSelection = { [weak self] _ in self?.onHistory() }
 
         let tracker = NoteTouchTracker()
         tracker.cancelsTouchesInView = false
@@ -276,6 +323,14 @@ final class NotePageView: UIView, UIGestureRecognizerDelegate {
         tracker.onMoved = { [weak self] in self?.touchMoved($0) }
         tracker.onEnded = { [weak self] in self?.touchEnded(lifted: $0) }
         canvas.addGestureRecognizer(tracker)
+
+        // Two fingers tap to undo, three to redo.
+        for (touches, action) in [(2, #selector(undo)), (3, #selector(redo))] {
+            let tap = UITapGestureRecognizer(target: self, action: action)
+            tap.numberOfTouchesRequired = touches
+            tap.delegate = self
+            addGestureRecognizer(tap)
+        }
 
         NotificationCenter.default.addObserver(
             self, selector: #selector(keyboardChanged(_:)), name: UIResponder.keyboardWillChangeFrameNotification, object: nil
@@ -301,15 +356,20 @@ final class NotePageView: UIView, UIGestureRecognizerDelegate {
     /// Hands the tool and its settings to the canvas and the overlay.
     func apply(tool: NoteTool, settings: NoteToolSettings) {
         if let pkTool = settings.pkTool(tool) { canvas.tool = pkTool }
-        // Tape and text are placed on the overlay; a finger mustn't also draw under it.
-        canvas.drawingGestureRecognizer.isEnabled = tool != .tape && tool != .text
+        // Selecting, tape and text happen on the overlay; a finger mustn't also draw under it.
+        canvas.drawingGestureRecognizer.isEnabled = tool == .pen || tool == .marker || tool == .eraser
 
         overlay.tapeWidth = settings.tape.width
         overlay.tapeColor = settings.tape.color
         overlay.textStyle = NoteTextStyle(
             size: settings.text.width, color: settings.text.color, bold: settings.textBold, background: settings.textBackground
         )
-        overlay.mode = tool == .tape ? .tape : tool == .text ? .text : .none
+        switch tool {
+        case .select: overlay.mode = .select
+        case .tape: overlay.mode = .tape
+        case .text: overlay.mode = .text
+        default: overlay.mode = .none
+        }
 
         switch tool {
         case .pen:
@@ -320,6 +380,66 @@ final class NotePageView: UIView, UIGestureRecognizerDelegate {
             lineInk = nil
         }
         erasesItems = tool == .eraser
+    }
+
+    // MARK: Changes and undo
+
+    var drawing: PKDrawing {
+        get { canvas.drawing }
+        set { canvas.drawing = newValue }
+    }
+
+    var visibleCenter: CGPoint {
+        let zoom = canvas.zoomScale
+        let x = (canvas.contentOffset.x + bounds.width / 2) / zoom
+        let y = (canvas.contentOffset.y + (bounds.height - keyboardInset) / 2) / zoom
+        return CGPoint(x: min(max(x, 20), page.size.width - 20), y: min(max(y, 20), page.size.height - 20))
+    }
+
+    /// Marks where a change to the strokes or the tapes / text boxes starts.
+    func beginChange() {
+        if changeBase == nil { changeBase = PageState(drawing: canvas.drawing, items: overlay.items) }
+    }
+
+    /// Ends the change: if anything is different it can be undone as one step, and the tapes / text boxes are saved.
+    func endChange() {
+        endChange(strokes: true)
+    }
+
+    /// `strokes` is false where PencilKit keeps its own undo for the strokes and only the items are ours.
+    private func endChange(strokes: Bool) {
+        guard let base = changeBase else { return }
+        changeBase = nil
+        let itemsChanged = base.items != overlay.items
+        let strokesChanged = strokes && base.drawing?.dataRepresentation() != canvas.drawing.dataRepresentation()
+        guard itemsChanged || strokesChanged else { return }
+        let undo = PageState(drawing: strokes ? base.drawing : nil, items: base.items)
+        canvas.undoManager?.registerUndo(withTarget: self) { $0.restore(undo) }
+        if itemsChanged { onSaveItems(overlay.items) }
+        onHistory()
+    }
+
+    /// Undo and redo both come through here: put a state back, and make that undoable in turn.
+    private func restore(_ state: PageState) {
+        changeBase = nil
+        beginChange()
+        if let drawing = state.drawing { canvas.drawing = drawing }
+        overlay.replace(state.items)
+        endChange(strokes: state.drawing != nil)
+    }
+
+    @objc func undo() {
+        overlay.endEditing()
+        overlay.clearSelection()
+        canvas.undoManager?.undo()
+        onHistory()
+    }
+
+    @objc func redo() {
+        overlay.endEditing()
+        overlay.clearSelection()
+        canvas.undoManager?.redo()
+        onHistory()
     }
 
     // MARK: Layout
@@ -383,28 +503,53 @@ final class NotePageView: UIView, UIGestureRecognizerDelegate {
         CGPoint(x: point.x / canvas.zoomScale, y: point.y / canvas.zoomScale)
     }
 
+    /// Drops the stroke PencilKit has in progress.
+    private func cancelInk() {
+        let recognizer = canvas.drawingGestureRecognizer
+        guard recognizer.isEnabled else { return }
+        recognizer.isEnabled = false
+        recognizer.isEnabled = true
+    }
+
     private func touchBegan(_ point: CGPoint) {
         let start = pagePoint(point)
-        if erasesItems { overlay.erase(at: start) }
+        // Beside the page: nothing to write on, so a sideways swipe turns the page.
+        guard CGRect(origin: .zero, size: page.size).contains(start) else {
+            marginSwipe = (point, point)
+            cancelInk()
+            return
+        }
+        if erasesItems {
+            erasing = true
+            beginChange()
+            overlay.erase(at: start)
+        }
         guard lineInk != nil else { return }
-        strokeStart = start
-        strokeEnd = start
+        strokePoints = [start]
         strokeCount = canvas.drawing.strokes.count
         travelled = 0
         holdAnchor = point
-        straightening = false
+        vertices = nil
         scheduleHold()
     }
 
     private func touchMoved(_ point: CGPoint) {
+        if marginSwipe != nil {
+            marginSwipe?.now = point
+            return
+        }
         let current = pagePoint(point)
-        if erasesItems { overlay.erase(at: current) }
-        guard let start = strokeStart, let ink = lineInk else { return }
-        travelled += hypot(current.x - strokeEnd.x, current.y - strokeEnd.y)
-        strokeEnd = current
-        if straightening {
-            overlay.showPreview(from: start, to: current, width: ink.width, color: previewColor(ink))
-        } else if hypot(point.x - holdAnchor.x, point.y - holdAnchor.y) > 6 {
+        if erasing { overlay.erase(at: current) }
+        guard let ink = lineInk, let last = strokePoints.last else { return }
+        if var corners = vertices {
+            corners[corners.count - 1] = current
+            vertices = corners
+            overlay.showPreview(corners, width: ink.width, color: previewColor(ink))
+            return
+        }
+        travelled += hypot(current.x - last.x, current.y - last.y)
+        strokePoints.append(current)
+        if hypot(point.x - holdAnchor.x, point.y - holdAnchor.y) > 6 {
             // Still moving: the hold starts over from here.
             holdAnchor = point
             scheduleHold()
@@ -414,16 +559,27 @@ final class NotePageView: UIView, UIGestureRecognizerDelegate {
     private func touchEnded(lifted: Bool) {
         holdWork?.cancel()
         holdWork = nil
-        guard let start = strokeStart else { return }
-        strokeStart = nil
-        guard straightening else { return }
-        straightening = false
+        if let swipe = marginSwipe {
+            marginSwipe = nil
+            let dx = swipe.now.x - swipe.start.x
+            let dy = swipe.now.y - swipe.start.y
+            if lifted, abs(dx) > 50, abs(dx) > abs(dy) * 2 { onTurn(dx < 0 ? 1 : -1) }
+            return
+        }
+        if erasing {
+            erasing = false
+            endChange(strokes: false)
+        }
+        strokePoints = []
+        guard let corners = vertices else { return }
+        vertices = nil
         overlay.hidePreview()
         guard lifted, let ink = lineInk else { return }
-        commitLine(from: start, to: strokeEnd, ink: ink)
+        commitLine(through: corners, ink: ink)
     }
 
-    /// Keeping the finger still for half a second at the end of a stroke turns the stroke into a straight line.
+    /// Keeping the finger still for half a second at the end of a stroke straightens it:
+    /// one line, or straight lines between its corners if it bends.
     private func scheduleHold() {
         holdWork?.cancel()
         let work = DispatchWorkItem { [weak self] in self?.beginStraightening() }
@@ -432,45 +588,84 @@ final class NotePageView: UIView, UIGestureRecognizerDelegate {
     }
 
     private func beginStraightening() {
-        guard let start = strokeStart, let ink = lineInk, !straightening, travelled > 12 else { return }
-        straightening = true
-        // Drops PencilKit's stroke in progress; from here the line follows the finger until it lifts.
-        canvas.drawingGestureRecognizer.isEnabled = false
-        canvas.drawingGestureRecognizer.isEnabled = true
+        guard let ink = lineInk, vertices == nil, travelled > 12, let first = strokePoints.first, let last = strokePoints.last else { return }
+        let xs = strokePoints.map(\.x)
+        let ys = strokePoints.map(\.y)
+        let diagonal = hypot((xs.max() ?? 0) - (xs.min() ?? 0), (ys.max() ?? 0) - (ys.min() ?? 0))
+        var corners = Self.simplify(strokePoints, tolerance: max(5, diagonal * 0.04))
+        // Too many corners is a curve, not a bent line: that becomes one straight line.
+        if corners.count < 2 || corners.count > 10 { corners = [first, last] }
+        vertices = corners
+        cancelInk()
         UIImpactFeedbackGenerator(style: .medium).impactOccurred()
-        overlay.showPreview(from: start, to: strokeEnd, width: ink.width, color: previewColor(ink))
+        overlay.showPreview(corners, width: ink.width, color: previewColor(ink))
+    }
+
+    /// Ramer–Douglas–Peucker: the points that stay when everything within `tolerance` of a straight run is dropped.
+    private static func simplify(_ points: [CGPoint], tolerance: CGFloat) -> [CGPoint] {
+        guard points.count > 2, let first = points.first, let last = points.last else { return points }
+        let dx = last.x - first.x
+        let dy = last.y - first.y
+        let length = hypot(dx, dy)
+        var farthest = 0
+        var distance: CGFloat = 0
+        for index in 1..<(points.count - 1) {
+            let point = points[index]
+            let away = length > 0
+                ? abs((point.x - first.x) * dy - (point.y - first.y) * dx) / length
+                : hypot(point.x - first.x, point.y - first.y)
+            if away > distance {
+                distance = away
+                farthest = index
+            }
+        }
+        guard distance > tolerance else { return [first, last] }
+        let head = simplify(Array(points[...farthest]), tolerance: tolerance)
+        let tail = simplify(Array(points[farthest...]), tolerance: tolerance)
+        return Array(head.dropLast()) + tail
     }
 
     private func previewColor(_ ink: LineInk) -> UIColor {
         ink.type == .marker ? ink.color.withAlphaComponent(0.45) : ink.color
     }
 
-    private func commitLine(from start: CGPoint, to end: CGPoint, ink: LineInk) {
-        let length = hypot(end.x - start.x, end.y - start.y)
-        guard length > 1 else { return }
-        let steps = max(2, Int(length / 4))
+    private func commitLine(through corners: [CGPoint], ink: LineInk) {
+        guard corners.count > 1 else { return }
         let size = CGSize(width: ink.width, height: ink.width)
         var points: [PKStrokePoint] = []
-        for step in 0...steps {
-            let t = CGFloat(step) / CGFloat(steps)
+        func add(_ location: CGPoint) {
             points.append(PKStrokePoint(
-                location: CGPoint(x: start.x + (end.x - start.x) * t, y: start.y + (end.y - start.y) * t),
-                timeOffset: TimeInterval(step) * 0.01, size: size, opacity: 1, force: 1, azimuth: 0, altitude: .pi / 2
+                location: location, timeOffset: TimeInterval(points.count) * 0.01,
+                size: size, opacity: 1, force: 1, azimuth: 0, altitude: .pi / 2
             ))
         }
+        for index in 0..<(corners.count - 1) {
+            let start = corners[index]
+            let end = corners[index + 1]
+            let length = hypot(end.x - start.x, end.y - start.y)
+            let steps = max(1, Int(length / 4))
+            // Three points on a corner keep it sharp; the curve through them can't round it off.
+            add(start)
+            add(start)
+            for step in 0..<steps {
+                let t = CGFloat(step) / CGFloat(steps)
+                add(CGPoint(x: start.x + (end.x - start.x) * t, y: start.y + (end.y - start.y) * t))
+            }
+        }
+        if let end = corners.last {
+            add(end)
+            add(end)
+            add(end)
+        }
+        guard points.count > 3 else { return }
         let stroke = PKStroke(ink: PKInk(ink.type, color: ink.color), path: PKStrokePath(controlPoints: points, creationDate: Date()))
         // If the dropped stroke was kept after all, the line takes its place.
         var strokes = canvas.drawing.strokes
         if strokes.count > strokeCount { strokes = Array(strokes.prefix(strokeCount)) }
         strokes.append(stroke)
-        setDrawing(PKDrawing(strokes: strokes))
-    }
-
-    /// Replaces the drawing in a way undo can take back.
-    private func setDrawing(_ drawing: PKDrawing) {
-        let old = canvas.drawing
-        canvas.undoManager?.registerUndo(withTarget: self) { $0.setDrawing(old) }
-        canvas.drawing = drawing
+        beginChange()
+        canvas.drawing = PKDrawing(strokes: strokes)
+        endChange()
     }
 }
 

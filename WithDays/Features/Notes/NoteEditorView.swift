@@ -2,19 +2,20 @@ import PencilKit
 import PhotosUI
 import SwiftUI
 
-enum NoteTool: String, CaseIterable, Identifiable {
-    case pen, marker, eraser, lasso, tape, text
+enum NoteTool: String, Identifiable {
+    case select, pen, marker, text, tape, eraser
 
     var id: String { rawValue }
 
+    /// An SF Symbol, or for tape the app's own drawing.
     var icon: String {
         switch self {
+        case .select: "lasso"
         case .pen: "pencil.tip"
         case .marker: "highlighter"
-        case .eraser: "eraser"
-        case .lasso: "lasso"
-        case .tape: "eye.slash"
         case .text: "textformat"
+        case .tape: "NotesTape"
+        case .eraser: "eraser"
         }
     }
 }
@@ -41,22 +42,26 @@ struct NoteShare: Identifiable {
     var id: URL { url }
 }
 
-/// A note open for writing: one page at a time, turned with a two-finger swipe or the page buttons.
-/// The toolbar can be dragged by its grip to any edge.
+/// A note open for writing: one page at a time, turned with a two-finger swipe, a swipe beside the page,
+/// or the page buttons. Holding the toolbar anywhere lifts it, to drag it to another edge.
 struct NoteEditorView: View {
     let noteID: String
+    /// The page to open on.
+    var startPage = 0
 
     @Environment(NotesStore.self) private var notes
     @Environment(\.dismiss) private var dismiss
 
-    @State private var index = 0
+    /// The page on screen; by ID, so it stays put when pages are moved or removed.
+    @State private var currentID: String?
     /// Which way the last turn went, for the slide.
     @State private var forward = true
     @State private var controller = NoteCanvasController()
     @State private var tool = NoteTool.pen
     @State private var settings = NoteToolSettings.load()
     @State private var showOptions = false
-    /// How far the toolbar has been dragged from its edge.
+    /// The toolbar has been lifted by a hold, and how far it's been dragged.
+    @State private var moving = false
     @State private var dragOffset = CGSize.zero
 
     @State private var renaming = false
@@ -65,7 +70,11 @@ struct NoteEditorView: View {
     @State private var showPhotos = false
     @State private var photo: PhotosPickerItem?
     @State private var showScanner = false
+    @State private var showPages = false
     @State private var share: NoteShare?
+    @State private var pageText: NotePageText?
+    /// Reading text from the page or the selection.
+    @State private var reading = false
     @State private var errorMessage: String?
 
     private var dock: NoteDock { NoteDock(rawValue: settings.dock) ?? .bottom }
@@ -79,8 +88,13 @@ struct NoteEditorView: View {
         }
     }
 
+    private func position(in note: Note) -> Int {
+        if let index = note.pages.firstIndex(where: { $0.id == currentID }) { return index }
+        return min(max(startPage, 0), note.pages.count - 1)
+    }
+
     private func content(_ note: Note) -> some View {
-        let current = min(index, note.pages.count - 1)
+        let current = position(in: note)
         let page = note.pages[current]
         let main = VStack(spacing: 0) {
             topBar(note, page)
@@ -92,6 +106,7 @@ struct NoteEditorView: View {
         .onChange(of: settings) { _, new in new.save() }
         .sensoryFeedback(.selection, trigger: tool)
         .sensoryFeedback(.impact(weight: .light), trigger: page.id)
+        .sensoryFeedback(.impact(weight: .medium), trigger: moving) { _, new in new }
         .sensoryFeedback(.impact(weight: .medium), trigger: settings.dock)
         return dialogs(imports(main, current), note, page, current)
     }
@@ -108,15 +123,23 @@ struct NoteEditorView: View {
                     }
                     .ignoresSafeArea(edges: .bottom)
                 }
-            .overlay(alignment: .bottom) {
-                if dock != .bottom {
-                    pager(note, current)
-                        .padding(.bottom, 8)
+                .overlay(alignment: .bottom) {
+                    if dock != .bottom {
+                        pager(note, current)
+                            .padding(.bottom, 8)
+                    }
                 }
-            }
-            .overlay(alignment: dock.alignment) { docked(note, current, geo.size) }
-            .coordinateSpace(.named("notes"))
-            .animation(.snappy(duration: 0.25), value: showOptions)
+                .overlay(alignment: dock.alignment) { docked(note, current, geo.size) }
+                .overlay {
+                    if reading {
+                        ProgressView("文字を認識中")
+                            .padding(20)
+                            .glassEffect(.regular, in: .rect(cornerRadius: 18))
+                    }
+                }
+                .coordinateSpace(.named("notes"))
+                .animation(.snappy(duration: 0.25), value: showOptions)
+                .animation(.snappy(duration: 0.25), value: controller.hasSelection)
         }
     }
 
@@ -165,6 +188,13 @@ struct NoteEditorView: View {
                 }
                 .ignoresSafeArea()
             }
+            .sheet(isPresented: $showPages) {
+                NotePagesSheet(noteID: noteID, currentID: currentID ?? notes.note(noteID)?.pages[current].id) { id in
+                    go(to: id)
+                }
+                .presentationDetents([.medium, .large])
+                .presentationDragIndicator(.visible)
+            }
     }
 
     private func dialogs<V: View>(_ view: V, _ note: Note, _ page: NotePage, _ current: Int) -> some View {
@@ -179,16 +209,23 @@ struct NoteEditorView: View {
             }
             .confirmationDialog("このページを削除します", isPresented: $confirmDelete, titleVisibility: .visible) {
                 Button("削除", role: .destructive) {
-                    forward = false
+                    // The next page takes its place, or the one before at the end.
+                    let neighbor = current + 1 < note.pages.count ? note.pages[current + 1].id : (current > 0 ? note.pages[current - 1].id : nil)
+                    forward = current + 1 < note.pages.count
                     withAnimation(.snappy) {
                         notes.deletePage(page.id, from: noteID)
-                        index = max(0, min(current, note.pages.count - 2))
+                        currentID = neighbor
                     }
                 }
             }
             .sheet(item: $share) { item in
                 ActivityView(items: [item.url])
                     .presentationDetents([.medium, .large])
+            }
+            .sheet(item: $pageText) { item in
+                NotePageTextSheet(text: item.text)
+                    .presentationDetents([.medium, .large])
+                    .presentationDragIndicator(.visible)
             }
             .errorAlert($errorMessage)
     }
@@ -243,6 +280,7 @@ struct NoteEditorView: View {
                 }
             }
             Divider()
+            Button("このページの文字を認識", systemImage: "text.viewfinder") { readPage(page, in: note) }
             Button("PDFで書き出し", systemImage: "doc") {
                 export { try notes.exportPDF(note) }
             }
@@ -307,76 +345,113 @@ struct NoteEditorView: View {
         }
     }
 
+    /// The selection's menu while something is selected (or can be pasted), else the tool's options when opened.
     @ViewBuilder
     private func optionsPanel(anchor: UnitPoint) -> some View {
-        if showOptions, tool != .lasso {
+        if moving {
+            EmptyView()
+        } else if tool == .select {
+            if controller.hasSelection || controller.canPaste {
+                NoteSelectionOptions(controller: controller, colors: settings.pen.colors, onToText: selectionToText)
+                    .transition(.scale(scale: 0.9, anchor: anchor).combined(with: .opacity))
+            }
+        } else if showOptions {
             NoteToolOptions(tool: tool, settings: $settings)
                 .transition(.scale(scale: 0.9, anchor: anchor).combined(with: .opacity))
         }
     }
 
+    /// Select | pen, highlighter, text, tape, eraser | color.
     private func toolbar(_ size: CGSize) -> some View {
         let vertical = dock.vertical
         let layout = vertical ? AnyLayout(VStackLayout(spacing: 2)) : AnyLayout(HStackLayout(spacing: 2))
         return layout {
-            grip(size)
-            ForEach(NoteTool.allCases) { toolButton($0) }
+            toolButton(.select)
+            separator(vertical)
+            toolButton(.pen)
+            toolButton(.marker)
+            toolButton(.text)
+            toolButton(.tape)
+            toolButton(.eraser)
+            separator(vertical)
             inkButton
         }
         .padding(vertical ? .vertical : .horizontal, 8)
         .frame(width: vertical ? 52 : nil, height: vertical ? nil : 52)
         .glassEffect(.regular, in: .capsule)
+        .scaleEffect(moving ? 1.06 : 1)
         .offset(dragOffset)
         .animation(.snappy(duration: 0.2), value: tool)
-    }
-
-    /// Dragging this moves the toolbar; let go and it settles on the nearest edge.
-    private func grip(_ size: CGSize) -> some View {
-        Image(systemName: "ellipsis")
-            .font(.system(size: 15, weight: .bold))
-            .foregroundStyle(.secondary)
-            .rotationEffect(.degrees(dock.vertical ? 0 : 90))
-            .frame(width: dock.vertical ? 40 : 22, height: dock.vertical ? 22 : 40)
-            .contentShape(Rectangle())
-            .gesture(
-                DragGesture(minimumDistance: 4, coordinateSpace: .named("notes"))
-                    .onChanged { value in
+        .animation(.spring(response: 0.3, dampingFraction: 0.7), value: moving)
+        // Held anywhere, the toolbar lifts and follows the finger; let go and it settles on the nearest edge.
+        .simultaneousGesture(
+            LongPressGesture(minimumDuration: 0.4)
+                .sequenced(before: DragGesture(minimumDistance: 0, coordinateSpace: .named("notes")))
+                .onChanged { value in
+                    guard case .second(true, let drag) = value else { return }
+                    if !moving {
+                        moving = true
                         showOptions = false
-                        dragOffset = value.translation
                     }
-                    .onEnded { value in
-                        let point = value.location
+                    if let drag { dragOffset = drag.translation }
+                }
+                .onEnded { value in
+                    guard moving else { return }
+                    var target = dock
+                    if case .second(true, let drag?) = value {
+                        let point = drag.location
                         let edges: [(NoteDock, CGFloat)] = [
                             (.left, point.x), (.right, size.width - point.x),
                             (.top, point.y), (.bottom, size.height - point.y),
                         ]
-                        let nearest = edges.min { $0.1 < $1.1 }?.0 ?? .bottom
-                        withAnimation(.spring(response: 0.35, dampingFraction: 0.8)) {
-                            settings.dock = nearest.rawValue
-                            dragOffset = .zero
-                        }
+                        target = edges.min { $0.1 < $1.1 }?.0 ?? dock
                     }
-            )
+                    withAnimation(.spring(response: 0.35, dampingFraction: 0.8)) {
+                        settings.dock = target.rawValue
+                        dragOffset = .zero
+                    }
+                    // The button under the finger may still see the release; it mustn't act on it.
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { moving = false }
+                }
+        )
+    }
+
+    private func separator(_ vertical: Bool) -> some View {
+        Rectangle()
+            .fill(Color.primary.opacity(0.15))
+            .frame(width: vertical ? 22 : 1, height: vertical ? 1 : 22)
+            .padding(vertical ? .vertical : .horizontal, 4)
     }
 
     private func toolButton(_ item: NoteTool) -> some View {
         Button {
+            guard !moving else { return }
             // Tapping the tool in use opens its options.
             if tool == item {
-                if item != .lasso { showOptions.toggle() }
+                if item != .select { showOptions.toggle() }
             } else {
                 tool = item
                 showOptions = false
             }
         } label: {
-            Image(systemName: item.icon)
-                .font(.system(size: 18, weight: .semibold))
-                .foregroundStyle(tool == item ? Color.white : Color.primary)
-                .frame(width: 40, height: 40)
-                .background {
-                    if tool == item { Circle().fill(Color.brand) }
+            Group {
+                if item == .tape {
+                    Image(item.icon)
+                        .renderingMode(.template)
+                        .resizable()
+                        .scaledToFit()
+                        .frame(width: 22, height: 22)
+                } else {
+                    Image(systemName: item.icon)
+                        .font(.system(size: 18, weight: .semibold))
                 }
-                .contentShape(Rectangle())
+            }
+            .foregroundStyle(tool == item ? Color.white : Color.primary)
+            .frame(width: 40, height: 40)
+            .background {
+                if tool == item { Circle().fill(Color.brand) }
+            }
+            .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
     }
@@ -390,7 +465,8 @@ struct NoteEditorView: View {
         default: settings.pen.color
         }
         return Button {
-            if tool == .eraser || tool == .lasso { tool = .pen }
+            guard !moving else { return }
+            if tool == .eraser || tool == .select { tool = .pen }
             showOptions.toggle()
         } label: {
             Circle()
@@ -403,27 +479,38 @@ struct NoteEditorView: View {
         .buttonStyle(.plain)
     }
 
+    /// ‹ 3 / 12 ›: the arrows turn the page, the numbers open the page list.
     private func pager(_ note: Note, _ current: Int) -> some View {
         let last = current == note.pages.count - 1
-        return HStack(spacing: 4) {
+        return HStack(spacing: 0) {
             Button { turn(-1, in: note) } label: {
                 Image(systemName: "chevron.left")
                     .frame(width: 36, height: 32)
                     .contentShape(Rectangle())
             }
             .disabled(current == 0)
-            Text("\(current + 1) / \(note.pages.count)")
-                .font(.system(size: 13, weight: .bold))
-                .monospacedDigit()
-                .foregroundStyle(.secondary)
-                .contentTransition(.numericText(value: Double(current)))
+            Button {
+                controller.flush()
+                showPages = true
+            } label: {
+                Text("\(current + 1) / \(note.pages.count)")
+                    .font(.system(size: 13, weight: .bold))
+                    .monospacedDigit()
+                    .foregroundStyle(.secondary)
+                    .contentTransition(.numericText(value: Double(current)))
+                    .padding(.horizontal, 6)
+                    .frame(height: 32)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
             // Past the last page, this adds one.
             Button {
                 if last {
                     controller.flush()
-                    notes.addPage(to: noteID, after: current)
-                    forward = true
-                    withAnimation(.snappy) { index = current + 1 }
+                    if let page = notes.addPage(to: noteID, after: current) {
+                        forward = true
+                        withAnimation(.snappy) { currentID = page.id }
+                    }
                 } else {
                     turn(1, in: note)
                 }
@@ -442,11 +529,18 @@ struct NoteEditorView: View {
     // MARK: Actions
 
     private func turn(_ step: Int, in note: Note) {
-        let current = min(index, note.pages.count - 1)
+        let current = position(in: note)
         let target = current + step
         guard note.pages.indices.contains(target) else { return }
         forward = step > 0
-        withAnimation(.snappy(duration: 0.3)) { index = target }
+        withAnimation(.snappy(duration: 0.3)) { currentID = note.pages[target].id }
+    }
+
+    /// From the page list.
+    private func go(to pageID: String) {
+        guard let note = notes.note(noteID), let target = note.pages.firstIndex(where: { $0.id == pageID }) else { return }
+        forward = target >= position(in: note)
+        withAnimation(.snappy(duration: 0.3)) { currentID = pageID }
     }
 
     /// Photos or scans become pages after this one; the first of them is shown.
@@ -455,7 +549,9 @@ struct NoteEditorView: View {
         do {
             try notes.addImagePages(images, to: noteID, after: current)
             forward = true
-            withAnimation(.snappy) { index = current + 1 }
+            if let pages = notes.note(noteID)?.pages, pages.indices.contains(current + 1) {
+                withAnimation(.snappy) { currentID = pages[current + 1].id }
+            }
         } catch {
             errorMessage = error.localizedDescription
         }
@@ -467,6 +563,31 @@ struct NoteEditorView: View {
             share = NoteShare(url: try make())
         } catch {
             errorMessage = error.localizedDescription
+        }
+    }
+
+    /// Reads the page's text (print, handwriting, text boxes) to show and copy.
+    private func readPage(_ page: NotePage, in note: Note) {
+        controller.flush()
+        reading = true
+        Task {
+            let text = await notes.text(of: page, in: note).trimmingCharacters(in: .whitespacesAndNewlines)
+            reading = false
+            if text.isEmpty {
+                errorMessage = "文字が見つかりませんでした"
+            } else {
+                pageText = NotePageText(text: text)
+            }
+        }
+    }
+
+    /// Reads the selected handwriting and swaps it for a text box.
+    private func selectionToText() {
+        reading = true
+        Task {
+            let done = await controller.selectionToText()
+            reading = false
+            if !done { errorMessage = "文字を読み取れませんでした" }
         }
     }
 }

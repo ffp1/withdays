@@ -37,10 +37,10 @@ struct NoteToolOptions: View {
                 if !settings.eraserWhole {
                     NoteWidthOptions(width: $settings.eraserWidth, presets: $settings.eraserWidths, range: 4...100, dot: { 4 + $0 * 0.25 })
                 }
-            case .lasso:
+            case .select:
                 EmptyView()
             }
-            if tool != .lasso, tool != .eraser || !settings.eraserWhole {
+            if tool != .select, tool != .eraser || !settings.eraserWhole {
                 Text("プリセットは長押しで今の値を保存")
                     .font(.system(size: 10))
                     .foregroundStyle(.secondary)
@@ -168,5 +168,91 @@ struct NoteWidthOptions: View {
             }
         }
         .sensoryFeedback(.success, trigger: saved)
+    }
+}
+
+/// What can be done with the selection. The short menu has cut, duplicate, delete and colors;
+/// ⋯ opens the rest: to the front / to the back, and reading handwriting as text.
+/// With nothing selected it offers to paste what was cut.
+struct NoteSelectionOptions: View {
+    let controller: NoteCanvasController
+    let colors: [Int]
+    var onToText: () -> Void
+
+    @State private var detail = false
+    @State private var custom = Color.black
+
+    var body: some View {
+        VStack(spacing: 10) {
+            if controller.hasSelection {
+                HStack(spacing: 8) {
+                    action("カット", "scissors") { controller.perform(.cut) }
+                    action("複製", "plus.square.on.square") { controller.perform(.duplicate) }
+                    action("削除", "trash") { controller.perform(.delete) }
+                    Button { detail.toggle() } label: {
+                        Image(systemName: "ellipsis")
+                            .font(.system(size: 15, weight: .bold))
+                            .foregroundStyle(detail ? Color.white : Color.primary)
+                            .frame(width: 40, height: 40)
+                            .background(Capsule().fill(detail ? Color.brand : Color.primary.opacity(0.06)))
+                    }
+                    .buttonStyle(.plain)
+                }
+                HStack(spacing: 0) {
+                    ForEach(colors, id: \.self) { hex in
+                        Circle()
+                            .fill(Color(notesHex: hex))
+                            .frame(width: 20, height: 20)
+                            .overlay(Circle().strokeBorder(Color.primary.opacity(0.15), lineWidth: 1))
+                            .frame(maxWidth: .infinity)
+                            .frame(height: 30)
+                            .contentShape(Rectangle())
+                            .onTapGesture { controller.perform(.color(hex)) }
+                    }
+                    ColorPicker("色を作る", selection: Binding(
+                        get: { custom },
+                        set: {
+                            custom = $0
+                            controller.perform(.color(UIColor($0).notesHex))
+                        }
+                    ), supportsOpacity: false)
+                    .labelsHidden()
+                    .padding(.leading, 6)
+                }
+                if detail {
+                    HStack(spacing: 8) {
+                        action("最上部へ", "square.3.layers.3d.top.filled") { controller.perform(.front) }
+                        action("最下部へ", "square.3.layers.3d.bottom.filled") { controller.perform(.back) }
+                    }
+                    if controller.hasSelectedStrokes {
+                        action("テキストに変換", "text.viewfinder", perform: onToText)
+                    }
+                }
+            } else if controller.canPaste {
+                action("ペースト", "doc.on.clipboard") { controller.paste() }
+            }
+        }
+        .padding(14)
+        .frame(maxWidth: 330)
+        .glassEffect(.regular, in: .rect(cornerRadius: 22))
+        .animation(.snappy(duration: 0.2), value: detail)
+    }
+
+    private func action(_ title: String, _ icon: String, perform: @escaping () -> Void) -> some View {
+        Button(action: perform) {
+            HStack(spacing: 5) {
+                Image(systemName: icon)
+                    .font(.system(size: 14, weight: .semibold))
+                Text(title)
+                    .font(.system(size: 13, weight: .bold))
+                    .lineLimit(1)
+            }
+            .foregroundStyle(.primary)
+            .frame(maxWidth: .infinity)
+            .frame(height: 40)
+            .background(Capsule().fill(Color.primary.opacity(0.06)))
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
     }
 }

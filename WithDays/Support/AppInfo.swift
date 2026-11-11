@@ -23,6 +23,12 @@ enum AppInfo {
 
     /// Newest first. Add an entry here with each release.
     static let changelog: [Release] = [
+        Release(version: "1.6.0", date: "2026.11.11", notes: [
+            "Notes：選択ツール（移動・拡大縮小・重ね順・色変え・カット）",
+            "Notes：文字認識（ページの文字をコピー、検索、手書きをテキストに）",
+            "Notes：ページ一覧、2本指 / 3本指タップで取り消し / やり直し",
+            "Notes：折れ線にも補正、テープとテキストも取り消せる",
+        ]),
         Release(version: "1.5.1", date: "2026.11.11", notes: [
             "Notes：書類のスキャン、マスキングテープ、テキストボックス",
             "Notes：太さ・色を無段階に、プリセット保存（長押し）",

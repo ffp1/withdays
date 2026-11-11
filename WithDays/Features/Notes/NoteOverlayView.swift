@@ -1,3 +1,4 @@
+import PencilKit
 import UIKit
 
 /// How new text boxes look, and what the box being edited is changed to.
@@ -8,11 +9,47 @@ struct NoteTextStyle: Equatable {
     var background: Int?
 }
 
-/// The layer over the handwriting: masking tapes and text boxes, laid out at the canvas's zoom so they stay sharp.
-/// It only takes touches while the tape or text tool is in use; otherwise they fall through to the canvas.
+/// What was cut, to paste on this page or another.
+struct NoteClip {
+    var strokes: [PKStroke]
+    var tapes: [NoteTape]
+    var texts: [NoteText]
+}
+
+@MainActor
+enum NoteClipboard {
+    static var clip: NoteClip?
+}
+
+enum NoteSelectionAction {
+    case cut, duplicate, delete, front, back
+    case color(Int)
+}
+
+/// What the overlay needs from the page: the strokes, and marking a change so it can be undone as one step.
+@MainActor
+protocol NoteOverlayHost: AnyObject {
+    var drawing: PKDrawing { get set }
+    func beginChange()
+    func endChange()
+    /// The middle of what's on screen, in page points.
+    var visibleCenter: CGPoint { get }
+}
+
+/// The layer over the handwriting: masking tapes and text boxes, laid out at the canvas's zoom so they stay sharp,
+/// and the selection (lasso, box, handles). It only takes touches while the tape, text or select tool is in use;
+/// otherwise they fall through to the canvas.
 final class NoteOverlayView: UIView, UITextViewDelegate, UIGestureRecognizerDelegate {
     enum Mode {
-        case none, tape, text
+        case none, tape, text, select
+    }
+
+    struct Selection: Equatable {
+        var strokes: Set<Int> = []
+        var tapes: Set<String> = []
+        var texts: Set<String> = []
+
+        var isEmpty: Bool { strokes.isEmpty && tapes.isEmpty && texts.isEmpty }
     }
 
     /// The app's blue; fixed, as this layer is always in light colors.
@@ -20,9 +57,10 @@ final class NoteOverlayView: UIView, UITextViewDelegate, UIGestureRecognizerDele
 
     private let pageSize: CGSize
     private(set) var items: NoteItems
-    var onChange: (NoteItems) -> Void = { _ in }
+    weak var host: NoteOverlayHost?
     /// The box being typed in changed size or started; the canvas keeps it clear of the keyboard.
     var onEditingFrame: (CGRect) -> Void = { _ in }
+    var onSelection: (Bool) -> Void = { _ in }
 
     var zoom: CGFloat = 1 {
         didSet { if zoom != oldValue { layoutItems() } }
@@ -33,6 +71,7 @@ final class NoteOverlayView: UIView, UITextViewDelegate, UIGestureRecognizerDele
             guard mode != oldValue else { return }
             isUserInteractionEnabled = mode != .none
             if mode != .text { endEditing() }
+            if mode != .select { clearSelection() }
         }
     }
 
@@ -45,16 +84,33 @@ final class NoteOverlayView: UIView, UITextViewDelegate, UIGestureRecognizerDele
     private var tapeLayers: [String: CAShapeLayer] = [:]
     private var textViews: [String: UITextView] = [:]
     private let preview = CAShapeLayer()
+    private let lassoLayer = CAShapeLayer()
+    private let boxLayer = CAShapeLayer()
+    private var cornerLayers: [CAShapeLayer] = []
     private let handle = UIView()
     private var editing: String?
+
+    private(set) var selection = Selection() {
+        didSet {
+            if selection.isEmpty != oldValue.isEmpty { onSelection(!selection.isEmpty) }
+            layoutSelection()
+        }
+    }
 
     private enum Drag {
         case tape(String)
         case move(String, CGPoint)
         case resize(String)
+        case lasso
+        case moveSelection(CGPoint)
+        case scaleSelection(anchor: CGPoint, distance: CGFloat)
     }
 
     private var drag: Drag?
+    private var lassoPoints: [CGPoint] = []
+    /// The strokes and items as they were when a selection drag began; each move works from these.
+    private var dragStrokes: [PKStroke] = []
+    private var dragItems = NoteItems()
 
     init(pageSize: CGSize, items: NoteItems) {
         self.pageSize = pageSize
@@ -62,14 +118,33 @@ final class NoteOverlayView: UIView, UITextViewDelegate, UIGestureRecognizerDele
         super.init(frame: CGRect(origin: .zero, size: pageSize))
         backgroundColor = .clear
         isUserInteractionEnabled = false
-        clipsToBounds = true
         // Ink, tape and text keep their colors: the paper is always white.
         overrideUserInterfaceStyle = .light
 
         preview.fillColor = nil
         preview.lineCap = .round
+        preview.lineJoin = .round
         preview.isHidden = true
         layer.addSublayer(preview)
+
+        for dashed in [lassoLayer, boxLayer] {
+            dashed.fillColor = nil
+            dashed.strokeColor = Self.accent.cgColor
+            dashed.lineWidth = 1.5
+            dashed.lineDashPattern = [6, 4]
+            dashed.isHidden = true
+            layer.addSublayer(dashed)
+        }
+        for _ in 0..<4 {
+            let corner = CAShapeLayer()
+            corner.fillColor = UIColor.white.cgColor
+            corner.strokeColor = Self.accent.cgColor
+            corner.lineWidth = 2
+            corner.path = UIBezierPath(ovalIn: CGRect(x: -6, y: -6, width: 12, height: 12)).cgPath
+            corner.isHidden = true
+            layer.addSublayer(corner)
+            cornerLayers.append(corner)
+        }
 
         handle.backgroundColor = .white
         handle.layer.borderColor = Self.accent.cgColor
@@ -96,6 +171,17 @@ final class NoteOverlayView: UIView, UITextViewDelegate, UIGestureRecognizerDele
         fatalError("init(coder:) has not been implemented")
     }
 
+    /// Undo / redo puts back a whole set of tapes and text boxes.
+    func replace(_ items: NoteItems) {
+        if let id = editing, let view = textViews[id] {
+            editing = nil
+            view.resignFirstResponder()
+        }
+        selection = Selection()
+        self.items = items
+        layoutItems()
+    }
+
     // MARK: Layout
 
     /// Puts every tape and text box where it belongs at this zoom.
@@ -108,7 +194,7 @@ final class NoteOverlayView: UIView, UITextViewDelegate, UIGestureRecognizerDele
             shape.removeFromSuperlayer()
             tapeLayers[id] = nil
         }
-        for tape in items.tapes {
+        for (order, tape) in items.tapes.enumerated() {
             let shape = tapeLayers[tape.id] ?? {
                 let shape = CAShapeLayer()
                 shape.fillColor = nil
@@ -117,6 +203,8 @@ final class NoteOverlayView: UIView, UITextViewDelegate, UIGestureRecognizerDele
                 tapeLayers[tape.id] = shape
                 return shape
             }()
+            // Later tapes lie over earlier ones.
+            shape.zPosition = CGFloat(order)
             let path = UIBezierPath()
             path.move(to: CGPoint(x: CGFloat(tape.x1) * zoom, y: CGFloat(tape.y1) * zoom))
             path.addLine(to: CGPoint(x: CGFloat(tape.x2) * zoom, y: CGFloat(tape.y2) * zoom))
@@ -124,12 +212,15 @@ final class NoteOverlayView: UIView, UITextViewDelegate, UIGestureRecognizerDele
             shape.lineWidth = CGFloat(tape.width) * zoom
             shape.strokeColor = UIColor(notesHex: tape.color).withAlphaComponent(tape.revealed ? 0.25 : 1).cgColor
         }
+        for overlayLayer in [preview, lassoLayer, boxLayer] + cornerLayers {
+            overlayLayer.zPosition = CGFloat(items.tapes.count + 1)
+        }
 
         for (id, view) in textViews where !items.texts.contains(where: { $0.id == id }) {
             view.removeFromSuperview()
             textViews[id] = nil
         }
-        for text in items.texts {
+        for (order, text) in items.texts.enumerated() {
             let view = textViews[text.id] ?? {
                 let view = UITextView()
                 view.isScrollEnabled = false
@@ -139,11 +230,12 @@ final class NoteOverlayView: UIView, UITextViewDelegate, UIGestureRecognizerDele
                 view.isSelectable = false
                 view.isUserInteractionEnabled = false
                 view.layer.borderColor = Self.accent.cgColor
-                // Text boxes sit under the tapes, so a tape can hide them.
-                insertSubview(view, at: 0)
+                addSubview(view)
                 textViews[text.id] = view
                 return view
             }()
+            // Text boxes sit under the tapes (so a tape can hide them), later boxes over earlier ones.
+            view.layer.zPosition = CGFloat(order) - CGFloat(items.texts.count) - 1
             if view.text != text.text { view.text = text.text }
             view.font = .systemFont(ofSize: CGFloat(text.size) * zoom, weight: text.bold ? .bold : .regular)
             view.textColor = UIColor(notesHex: text.color)
@@ -160,9 +252,34 @@ final class NoteOverlayView: UIView, UITextViewDelegate, UIGestureRecognizerDele
         if let editing, let view = textViews[editing] {
             handle.isHidden = false
             handle.center = CGPoint(x: view.frame.maxX + 14, y: view.frame.midY)
-            bringSubviewToFront(handle)
+            handle.layer.zPosition = CGFloat(items.tapes.count + 2)
         } else {
             handle.isHidden = true
+        }
+        layoutSelection()
+    }
+
+    /// The dashed box around what's selected, with a handle on each corner.
+    private func layoutSelection() {
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        defer { CATransaction.commit() }
+        guard let bounds = selectionBounds else {
+            boxLayer.isHidden = true
+            cornerLayers.forEach { $0.isHidden = true }
+            return
+        }
+        let box = CGRect(x: bounds.minX * zoom, y: bounds.minY * zoom, width: bounds.width * zoom, height: bounds.height * zoom)
+            .insetBy(dx: -6, dy: -6)
+        boxLayer.path = UIBezierPath(rect: box).cgPath
+        boxLayer.isHidden = false
+        let corners = [
+            CGPoint(x: box.minX, y: box.minY), CGPoint(x: box.maxX, y: box.minY),
+            CGPoint(x: box.minX, y: box.maxY), CGPoint(x: box.maxX, y: box.maxY),
+        ]
+        for (corner, point) in zip(cornerLayers, corners) {
+            corner.position = point
+            corner.isHidden = false
         }
     }
 
@@ -171,14 +288,17 @@ final class NoteOverlayView: UIView, UITextViewDelegate, UIGestureRecognizerDele
         editing.flatMap { textViews[$0]?.frame }
     }
 
-    // MARK: Straight-line preview (drawn by the canvas while a held stroke is being straightened)
+    // MARK: Line preview (drawn by the canvas while a held stroke is being straightened)
 
-    func showPreview(from start: CGPoint, to end: CGPoint, width: CGFloat, color: UIColor) {
+    func showPreview(_ points: [CGPoint], width: CGFloat, color: UIColor) {
+        guard let first = points.first else { return }
         CATransaction.begin()
         CATransaction.setDisableActions(true)
         let path = UIBezierPath()
-        path.move(to: CGPoint(x: start.x * zoom, y: start.y * zoom))
-        path.addLine(to: CGPoint(x: end.x * zoom, y: end.y * zoom))
+        path.move(to: CGPoint(x: first.x * zoom, y: first.y * zoom))
+        for point in points.dropFirst() {
+            path.addLine(to: CGPoint(x: point.x * zoom, y: point.y * zoom))
+        }
         preview.path = path.cgPath
         preview.lineWidth = width * zoom
         preview.strokeColor = color.cgColor
@@ -192,18 +312,14 @@ final class NoteOverlayView: UIView, UITextViewDelegate, UIGestureRecognizerDele
 
     // MARK: Erasing
 
-    /// The eraser passing over a tape or a text box removes it.
+    /// The eraser passing over a tape or a text box removes it. The caller marks the change.
     func erase(at point: CGPoint) {
         let tapes = items.tapes.filter { !Self.hit($0, point, slack: 4) }
-        let texts = items.texts.filter { text in
-            guard let view = textViews[text.id] else { return true }
-            return !view.frame.contains(CGPoint(x: point.x * zoom, y: point.y * zoom))
-        }
+        let texts = items.texts.filter { !(textFrame($0.id)?.contains(point) ?? false) }
         guard tapes.count != items.tapes.count || texts.count != items.texts.count else { return }
         items.tapes = tapes
         items.texts = texts
         layoutItems()
-        onChange(items)
     }
 
     private static func hit(_ tape: NoteTape, _ point: CGPoint, slack: CGFloat) -> Bool {
@@ -220,18 +336,68 @@ final class NoteOverlayView: UIView, UITextViewDelegate, UIGestureRecognizerDele
         return distance <= CGFloat(tape.width) / 2 + slack
     }
 
-    // MARK: Gestures
+    // MARK: Geometry (page points)
 
     private func pagePoint(_ recognizer: UIGestureRecognizer) -> CGPoint {
         let point = recognizer.location(in: self)
         return CGPoint(x: point.x / zoom, y: point.y / zoom)
     }
 
-    private func text(at point: CGPoint) -> NoteText? {
-        items.texts.last { text in
-            textViews[text.id]?.frame.contains(CGPoint(x: point.x * zoom, y: point.y * zoom)) ?? false
-        }
+    private func textFrame(_ id: String) -> CGRect? {
+        guard let frame = textViews[id]?.frame else { return nil }
+        return CGRect(x: frame.minX / zoom, y: frame.minY / zoom, width: frame.width / zoom, height: frame.height / zoom)
     }
+
+    private func text(at point: CGPoint) -> NoteText? {
+        items.texts.last { textFrame($0.id)?.contains(point) ?? false }
+    }
+
+    private static func bounds(of tape: NoteTape) -> CGRect {
+        let half = CGFloat(tape.width) / 2
+        return CGRect(
+            x: CGFloat(min(tape.x1, tape.x2)), y: CGFloat(min(tape.y1, tape.y2)),
+            width: CGFloat(abs(tape.x2 - tape.x1)), height: CGFloat(abs(tape.y2 - tape.y1))
+        ).insetBy(dx: -half, dy: -half)
+    }
+
+    private var selectionBounds: CGRect? {
+        guard !selection.isEmpty else { return nil }
+        var rects: [CGRect] = []
+        if let strokes = host?.drawing.strokes {
+            for index in selection.strokes where strokes.indices.contains(index) {
+                rects.append(strokes[index].renderBounds)
+            }
+        }
+        for tape in items.tapes where selection.tapes.contains(tape.id) {
+            rects.append(Self.bounds(of: tape))
+        }
+        for id in selection.texts {
+            if let frame = textFrame(id) { rects.append(frame) }
+        }
+        guard var union = rects.first else { return nil }
+        for rect in rects.dropFirst() { union = union.union(rect) }
+        return union
+    }
+
+    private static func points(of stroke: PKStroke, every distance: CGFloat) -> [CGPoint] {
+        stroke.path.interpolatedPoints(by: .distance(distance)).map { $0.location.applying(stroke.transform) }
+    }
+
+    private static func contains(_ polygon: [CGPoint], _ point: CGPoint) -> Bool {
+        guard polygon.count > 2 else { return false }
+        var inside = false
+        var previous = polygon[polygon.count - 1]
+        for current in polygon {
+            if (current.y > point.y) != (previous.y > point.y),
+               point.x < (previous.x - current.x) * (point.y - current.y) / (previous.y - current.y) + current.x {
+                inside.toggle()
+            }
+            previous = current
+        }
+        return inside
+    }
+
+    // MARK: Gestures
 
     /// Typing and selecting inside the box being edited is the text view's business.
     func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer, shouldReceive touch: UITouch) -> Bool {
@@ -251,14 +417,16 @@ final class NoteOverlayView: UIView, UITextViewDelegate, UIGestureRecognizerDele
         case .tape:
             // Peel back / put back the topmost tape here.
             guard let index = items.tapes.lastIndex(where: { Self.hit($0, point, slack: 2) }) else { return }
+            host?.beginChange()
             items.tapes[index].revealed.toggle()
             UISelectionFeedbackGenerator().selectionChanged()
             layoutItems()
-            onChange(items)
+            host?.endChange()
         case .text:
             if editing != nil {
                 endEditing()
             } else if let text = text(at: point) {
+                host?.beginChange()
                 beginEditing(text.id)
             } else {
                 let x = Double(min(max(point.x, 8), pageSize.width - 88))
@@ -268,10 +436,13 @@ final class NoteOverlayView: UIView, UITextViewDelegate, UIGestureRecognizerDele
                     id: NotesData.newID("text"), x: x, y: y, width: width, text: "",
                     size: textStyle.size, color: textStyle.color, bold: textStyle.bold, background: textStyle.background
                 )
+                host?.beginChange()
                 items.texts.append(text)
                 layoutItems()
                 beginEditing(text.id)
             }
+        case .select:
+            selection = single(at: point)
         }
     }
 
@@ -280,20 +451,27 @@ final class NoteOverlayView: UIView, UITextViewDelegate, UIGestureRecognizerDele
         switch recognizer.state {
         case .began:
             drag = nil
-            if mode == .tape {
+            switch mode {
+            case .none:
+                break
+            case .tape:
                 let id = NotesData.newID("tape")
+                host?.beginChange()
                 items.tapes.append(NoteTape(
                     id: id, x1: Double(point.x), y1: Double(point.y), x2: Double(point.x), y2: Double(point.y),
                     width: tapeWidth, color: tapeColor, revealed: false
                 ))
                 drag = .tape(id)
-            } else if mode == .text {
+            case .text:
                 let touch = recognizer.location(in: self)
                 if let editing, !handle.isHidden, hypot(touch.x - handle.center.x, touch.y - handle.center.y) < 24 {
                     drag = .resize(editing)
                 } else if let text = text(at: point) {
+                    if editing == nil { host?.beginChange() }
                     drag = .move(text.id, CGPoint(x: point.x - CGFloat(text.x), y: point.y - CGFloat(text.y)))
                 }
+            case .select:
+                beginSelectionDrag(at: point)
             }
         case .changed:
             switch drag {
@@ -301,28 +479,55 @@ final class NoteOverlayView: UIView, UITextViewDelegate, UIGestureRecognizerDele
                 guard let index = items.tapes.firstIndex(where: { $0.id == id }) else { return }
                 items.tapes[index].x2 = Double(point.x)
                 items.tapes[index].y2 = Double(point.y)
+                layoutItems()
             case .move(let id, let offset):
                 guard let index = items.texts.firstIndex(where: { $0.id == id }) else { return }
                 items.texts[index].x = Double(min(max(point.x - offset.x, 0), pageSize.width - 20))
                 items.texts[index].y = Double(min(max(point.y - offset.y, 0), pageSize.height - 20))
+                layoutItems()
             case .resize(let id):
                 guard let index = items.texts.firstIndex(where: { $0.id == id }) else { return }
                 // The handle sits a little right of the box's edge.
                 items.texts[index].width = max(60, Double(point.x - 14 / zoom) - items.texts[index].x)
+                layoutItems()
+            case .lasso:
+                lassoPoints.append(point)
+                showLasso()
+            case .moveSelection(let start):
+                transformSelection(CGAffineTransform(translationX: point.x - start.x, y: point.y - start.y), scale: 1)
+            case .scaleSelection(let anchor, let distance):
+                let scale = min(max(hypot(point.x - anchor.x, point.y - anchor.y) / distance, 0.2), 6)
+                let transform = CGAffineTransform(translationX: anchor.x, y: anchor.y)
+                    .scaledBy(x: scale, y: scale)
+                    .translatedBy(x: -anchor.x, y: -anchor.y)
+                transformSelection(transform, scale: scale)
             case nil:
                 return
             }
-            layoutItems()
         case .ended, .cancelled, .failed:
             guard let finished = drag else { return }
             drag = nil
-            if case .tape(let id) = finished, let index = items.tapes.firstIndex(where: { $0.id == id }) {
-                let tape = items.tapes[index]
-                // A touch that barely moved isn't a tape.
-                if hypot(tape.x2 - tape.x1, tape.y2 - tape.y1) < 8 { items.tapes.remove(at: index) }
+            switch finished {
+            case .tape(let id):
+                if let index = items.tapes.firstIndex(where: { $0.id == id }) {
+                    let tape = items.tapes[index]
+                    // A touch that barely moved isn't a tape.
+                    if hypot(tape.x2 - tape.x1, tape.y2 - tape.y1) < 8 { items.tapes.remove(at: index) }
+                }
+                layoutItems()
+                host?.endChange()
+            case .move, .resize:
+                layoutItems()
+                // While typing, the change ends with the typing.
+                if editing == nil { host?.endChange() }
+            case .lasso:
+                lassoLayer.isHidden = true
+                selection = enclosed(by: lassoPoints)
+                lassoPoints = []
+            case .moveSelection, .scaleSelection:
+                dragStrokes = []
+                host?.endChange()
             }
-            layoutItems()
-            onChange(items)
         default:
             break
         }
@@ -330,6 +535,7 @@ final class NoteOverlayView: UIView, UITextViewDelegate, UIGestureRecognizerDele
 
     // MARK: Text editing
 
+    /// The caller has marked the change's start; it ends when the typing does.
     private func beginEditing(_ id: String) {
         guard let view = textViews[id] else { return }
         editing = id
@@ -356,7 +562,7 @@ final class NoteOverlayView: UIView, UITextViewDelegate, UIGestureRecognizerDele
             items.texts.remove(at: index)
         }
         layoutItems()
-        onChange(items)
+        host?.endChange()
     }
 
     /// The options changed while a box is being edited: it takes them on.
@@ -374,5 +580,291 @@ final class NoteOverlayView: UIView, UITextViewDelegate, UIGestureRecognizerDele
         items.texts[index].text = textView.text
         layoutItems()
         onEditingFrame(textView.frame)
+    }
+
+    // MARK: Selecting
+
+    func clearSelection() {
+        lassoLayer.isHidden = true
+        if !selection.isEmpty { selection = Selection() }
+    }
+
+    /// The topmost thing under a tap: a tape, a text box, or a stroke.
+    private func single(at point: CGPoint) -> Selection {
+        if let tape = items.tapes.last(where: { Self.hit($0, point, slack: 2) }) {
+            return Selection(tapes: [tape.id])
+        }
+        if let text = text(at: point) {
+            return Selection(texts: [text.id])
+        }
+        let strokes = host?.drawing.strokes ?? []
+        for index in strokes.indices.reversed() {
+            let stroke = strokes[index]
+            guard stroke.renderBounds.insetBy(dx: -12, dy: -12).contains(point) else { continue }
+            let reach = max(10, (stroke.path.first?.size.width ?? 4) / 2 + 6)
+            if Self.points(of: stroke, every: 5).contains(where: { hypot($0.x - point.x, $0.y - point.y) <= reach }) {
+                return Selection(strokes: [index])
+            }
+        }
+        return Selection()
+    }
+
+    /// What the lasso went around: strokes mostly inside it, tapes and text boxes whose middle is inside.
+    private func enclosed(by polygon: [CGPoint]) -> Selection {
+        var found = Selection()
+        guard polygon.count > 2 else { return found }
+        let strokes = host?.drawing.strokes ?? []
+        for (index, stroke) in strokes.enumerated() {
+            let points = Self.points(of: stroke, every: 8)
+            guard !points.isEmpty else { continue }
+            let inside = points.filter { Self.contains(polygon, $0) }.count
+            if Double(inside) >= Double(points.count) * 0.6 { found.strokes.insert(index) }
+        }
+        for tape in items.tapes {
+            let middle = CGPoint(x: (tape.x1 + tape.x2) / 2, y: (tape.y1 + tape.y2) / 2)
+            if Self.contains(polygon, middle) { found.tapes.insert(tape.id) }
+        }
+        for text in items.texts {
+            if let frame = textFrame(text.id), Self.contains(polygon, CGPoint(x: frame.midX, y: frame.midY)) {
+                found.texts.insert(text.id)
+            }
+        }
+        return found
+    }
+
+    private func showLasso() {
+        guard let first = lassoPoints.first else { return }
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        let path = UIBezierPath()
+        path.move(to: CGPoint(x: first.x * zoom, y: first.y * zoom))
+        for point in lassoPoints.dropFirst() {
+            path.addLine(to: CGPoint(x: point.x * zoom, y: point.y * zoom))
+        }
+        lassoLayer.path = path.cgPath
+        lassoLayer.isHidden = false
+        CATransaction.commit()
+    }
+
+    /// A corner handle scales, inside the box moves, anywhere else starts a new lasso.
+    private func beginSelectionDrag(at point: CGPoint) {
+        if let bounds = selectionBounds {
+            let box = bounds.insetBy(dx: -6 / zoom, dy: -6 / zoom)
+            let corners = [
+                CGPoint(x: box.minX, y: box.minY), CGPoint(x: box.maxX, y: box.minY),
+                CGPoint(x: box.minX, y: box.maxY), CGPoint(x: box.maxX, y: box.maxY),
+            ]
+            let reach = 24 / zoom
+            if let corner = corners.firstIndex(where: { hypot($0.x - point.x, $0.y - point.y) < reach }) {
+                // Scales from the opposite corner.
+                let anchor = corners[3 - corner]
+                let distance = hypot(point.x - anchor.x, point.y - anchor.y)
+                if distance > 4 {
+                    startSelectionChange()
+                    drag = .scaleSelection(anchor: anchor, distance: distance)
+                    return
+                }
+            }
+            if box.contains(point) {
+                startSelectionChange()
+                drag = .moveSelection(point)
+                return
+            }
+        }
+        clearSelection()
+        lassoPoints = [point]
+        drag = .lasso
+    }
+
+    private func startSelectionChange() {
+        host?.beginChange()
+        dragStrokes = host?.drawing.strokes ?? []
+        dragItems = items
+    }
+
+    /// Moves or scales what's selected, from how it was when the drag began.
+    private func transformSelection(_ transform: CGAffineTransform, scale: CGFloat) {
+        var strokes = dragStrokes
+        for index in selection.strokes where strokes.indices.contains(index) {
+            strokes[index].transform = dragStrokes[index].transform.concatenating(transform)
+        }
+        if !selection.strokes.isEmpty { host?.drawing = PKDrawing(strokes: strokes) }
+        var changed = dragItems
+        for index in changed.tapes.indices where selection.tapes.contains(changed.tapes[index].id) {
+            Self.apply(transform, scale: scale, to: &changed.tapes[index])
+        }
+        for index in changed.texts.indices where selection.texts.contains(changed.texts[index].id) {
+            Self.apply(transform, scale: scale, to: &changed.texts[index])
+        }
+        items = changed
+        layoutItems()
+    }
+
+    private static func apply(_ transform: CGAffineTransform, scale: CGFloat, to tape: inout NoteTape) {
+        let start = CGPoint(x: tape.x1, y: tape.y1).applying(transform)
+        let end = CGPoint(x: tape.x2, y: tape.y2).applying(transform)
+        tape.x1 = Double(start.x)
+        tape.y1 = Double(start.y)
+        tape.x2 = Double(end.x)
+        tape.y2 = Double(end.y)
+        tape.width *= Double(scale)
+    }
+
+    private static func apply(_ transform: CGAffineTransform, scale: CGFloat, to text: inout NoteText) {
+        let origin = CGPoint(x: text.x, y: text.y).applying(transform)
+        text.x = Double(origin.x)
+        text.y = Double(origin.y)
+        text.width *= Double(scale)
+        text.size *= Double(scale)
+    }
+
+    // MARK: Selection actions
+
+    func perform(_ action: NoteSelectionAction) {
+        guard !selection.isEmpty, let host else { return }
+        var strokes = host.drawing.strokes
+        let picked = selection.strokes.filter { strokes.indices.contains($0) }.sorted()
+        host.beginChange()
+        defer { host.endChange() }
+
+        switch action {
+        case .cut, .delete:
+            if case .cut = action {
+                NoteClipboard.clip = NoteClip(
+                    strokes: picked.map { strokes[$0] },
+                    tapes: items.tapes.filter { selection.tapes.contains($0.id) },
+                    texts: items.texts.filter { selection.texts.contains($0.id) }
+                )
+            }
+            let removed = selection
+            selection = Selection()
+            for index in picked.reversed() { strokes.remove(at: index) }
+            if !picked.isEmpty { host.drawing = PKDrawing(strokes: strokes) }
+            items.tapes.removeAll { removed.tapes.contains($0.id) }
+            items.texts.removeAll { removed.texts.contains($0.id) }
+            layoutItems()
+        case .duplicate:
+            let clip = NoteClip(
+                strokes: picked.map { strokes[$0] },
+                tapes: items.tapes.filter { selection.tapes.contains($0.id) },
+                texts: items.texts.filter { selection.texts.contains($0.id) }
+            )
+            add(clip, moved: CGAffineTransform(translationX: 16, y: 16))
+        case .front, .back:
+            let toFront: Bool = { if case .front = action { return true } else { return false } }()
+            if !picked.isEmpty {
+                let chosen = picked.map { strokes[$0] }
+                let rest = strokes.indices.filter { !selection.strokes.contains($0) }.map { strokes[$0] }
+                host.drawing = PKDrawing(strokes: toFront ? rest + chosen : chosen + rest)
+                let range = toFront ? rest.count..<(rest.count + chosen.count) : 0..<chosen.count
+                selection.strokes = Set(range)
+            }
+            let tapes = items.tapes.filter { selection.tapes.contains($0.id) }
+            let otherTapes = items.tapes.filter { !selection.tapes.contains($0.id) }
+            items.tapes = toFront ? otherTapes + tapes : tapes + otherTapes
+            let texts = items.texts.filter { selection.texts.contains($0.id) }
+            let otherTexts = items.texts.filter { !selection.texts.contains($0.id) }
+            items.texts = toFront ? otherTexts + texts : texts + otherTexts
+            layoutItems()
+        case .color(let hex):
+            let color = UIColor(notesHex: hex)
+            for index in picked {
+                strokes[index].ink = PKInk(strokes[index].ink.inkType, color: color)
+            }
+            if !picked.isEmpty { host.drawing = PKDrawing(strokes: strokes) }
+            for index in items.tapes.indices where selection.tapes.contains(items.tapes[index].id) {
+                items.tapes[index].color = hex
+            }
+            for index in items.texts.indices where selection.texts.contains(items.texts[index].id) {
+                items.texts[index].color = hex
+            }
+            layoutItems()
+        }
+    }
+
+    /// Puts what was cut in the middle of what's on screen, selected.
+    func paste() {
+        guard let clip = NoteClipboard.clip, let host else { return }
+        var rects = clip.strokes.map(\.renderBounds) + clip.tapes.map { Self.bounds(of: $0) }
+        rects += clip.texts.map { CGRect(x: $0.x, y: $0.y, width: $0.width, height: $0.size * 1.4) }
+        guard var union = rects.first else { return }
+        for rect in rects.dropFirst() { union = union.union(rect) }
+        let center = host.visibleCenter
+        host.beginChange()
+        add(clip, moved: CGAffineTransform(translationX: center.x - union.midX, y: center.y - union.midY))
+        host.endChange()
+    }
+
+    /// Adds copies on top and selects them. The caller marks the change.
+    private func add(_ clip: NoteClip, moved transform: CGAffineTransform) {
+        guard let host else { return }
+        var strokes = host.drawing.strokes
+        let first = strokes.count
+        for var stroke in clip.strokes {
+            stroke.transform = stroke.transform.concatenating(transform)
+            strokes.append(stroke)
+        }
+        if !clip.strokes.isEmpty { host.drawing = PKDrawing(strokes: strokes) }
+        var added = Selection(strokes: Set(first..<strokes.count))
+        for var tape in clip.tapes {
+            tape.id = NotesData.newID("tape")
+            Self.apply(transform, scale: 1, to: &tape)
+            items.tapes.append(tape)
+            added.tapes.insert(tape.id)
+        }
+        for var text in clip.texts {
+            text.id = NotesData.newID("text")
+            Self.apply(transform, scale: 1, to: &text)
+            items.texts.append(text)
+            added.texts.insert(text.id)
+        }
+        layoutItems()
+        selection = added
+    }
+
+    /// The selected strokes alone on white, for reading them as text; nil when no stroke is selected.
+    func selectedStrokesImage() -> (image: UIImage, bounds: CGRect)? {
+        guard let host else { return nil }
+        let strokes = host.drawing.strokes
+        let picked = selection.strokes.filter { strokes.indices.contains($0) }.sorted().map { strokes[$0] }
+        guard var bounds = picked.first?.renderBounds else { return nil }
+        for stroke in picked.dropFirst() { bounds = bounds.union(stroke.renderBounds) }
+        let frame = bounds.insetBy(dx: -12, dy: -12)
+        var ink = UIImage()
+        UITraitCollection(userInterfaceStyle: .light).performAsCurrent {
+            ink = PKDrawing(strokes: picked).image(from: frame, scale: 3)
+        }
+        let format = UIGraphicsImageRendererFormat()
+        format.scale = 3
+        format.opaque = true
+        let image = UIGraphicsImageRenderer(size: frame.size, format: format).image { context in
+            UIColor.white.setFill()
+            context.fill(CGRect(origin: .zero, size: frame.size))
+            ink.draw(in: CGRect(origin: .zero, size: frame.size))
+        }
+        return (image, bounds)
+    }
+
+    /// Swaps the selected strokes for a text box with what they say.
+    func replaceSelectedStrokes(with string: String, in bounds: CGRect) {
+        guard let host else { return }
+        var strokes = host.drawing.strokes
+        let picked = selection.strokes.filter { strokes.indices.contains($0) }.sorted()
+        guard !picked.isEmpty else { return }
+        let lines = max(1, string.components(separatedBy: "\n").count)
+        let size = min(max(Double(bounds.height) / Double(lines) * 0.7, 10), 40)
+        host.beginChange()
+        selection = Selection()
+        for index in picked.reversed() { strokes.remove(at: index) }
+        host.drawing = PKDrawing(strokes: strokes)
+        let text = NoteText(
+            id: NotesData.newID("text"), x: Double(bounds.minX), y: Double(bounds.minY),
+            width: max(80, Double(bounds.width) + 16), text: string,
+            size: size, color: textStyle.color, bold: false, background: nil
+        )
+        items.texts.append(text)
+        layoutItems()
+        selection = Selection(texts: [text.id])
+        host.endChange()
     }
 }

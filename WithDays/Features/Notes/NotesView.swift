@@ -25,9 +25,15 @@ struct NotesView: View {
     @State private var deletingNote: Note?
     @State private var share: NoteShare?
     @State private var errorMessage: String?
+    /// Searching every note by its name and the text read from its pages.
+    @State private var searching = false
+    @State private var query = ""
+    @FocusState private var searchFocused: Bool
 
     struct NoteRef: Identifiable {
         let id: String
+        /// The page to open on.
+        var page = 0
     }
 
     /// A name being asked for: a new folder, or renaming a folder / a note.
@@ -79,23 +85,42 @@ struct NotesView: View {
     /// The grid with its bar; apart from the sheets so each part type-checks quickly.
     private var library: some View {
         let list = notes.notes(in: folder?.id)
+        let finding = searching && !query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        let found = finding ? notes.search(query) : []
         return ScrollView {
+            if searching {
+                searchField
+            }
             LazyVGrid(columns: columns, spacing: 20) {
-                if folder == nil {
-                    ForEach(notes.folders) { folderCell($0) }
+                if finding {
+                    ForEach(found, id: \.note.id) { noteCell($0.note, page: $0.page) }
+                } else {
+                    if folder == nil {
+                        ForEach(notes.folders) { folderCell($0) }
+                    }
+                    ForEach(list) { noteCell($0) }
                 }
-                ForEach(list) { noteCell($0) }
             }
             .padding(.horizontal, 20)
             .padding(.top, 12)
             .padding(.bottom, 100)
         }
         .overlay {
-            if list.isEmpty, folder != nil || notes.folders.isEmpty {
+            if finding {
+                if found.isEmpty {
+                    ContentUnavailableView("見つかりませんでした", systemImage: "magnifyingglass")
+                }
+            } else if !searching, list.isEmpty, folder != nil || notes.folders.isEmpty {
                 ContentUnavailableView("ノートがありません", systemImage: "pencil.and.scribble", description: Text("＋から作成できます"))
             }
         }
         .overlay(alignment: .bottomTrailing) { addButton }
+        .animation(.snappy, value: searching)
+        // Pages are read in the background so they can be searched; again after a note has been open.
+        .task { await notes.readPages() }
+        .onChange(of: open?.id) { _, new in
+            if new == nil { Task { await notes.readPages() } }
+        }
         .animation(.snappy, value: folder)
         .animation(.snappy, value: notes.state.notes)
         .animation(.snappy, value: notes.state.folders)
@@ -119,7 +144,18 @@ struct NotesView: View {
                 .allowsHitTesting(folder != nil)
             }
             .sharedBackgroundVisibility(.hidden)
-            ToolbarItem(placement: .topBarTrailing) {
+            ToolbarItemGroup(placement: .topBarTrailing) {
+                Button {
+                    searching.toggle()
+                    if searching {
+                        searchFocused = true
+                    } else {
+                        query = ""
+                    }
+                } label: {
+                    Image(systemName: searching ? "xmark" : "magnifyingglass")
+                        .contentTransition(.symbolEffect(.replace))
+                }
                 Button(action: onCalendar) {
                     Image(systemName: "calendar")
                 }
@@ -127,11 +163,46 @@ struct NotesView: View {
         }
     }
 
+    /// Finds notes by name, and by the text in their pages (print, handwriting, text boxes).
+    private var searchField: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 8) {
+                Image(systemName: "magnifyingglass")
+                    .foregroundStyle(.secondary)
+                TextField("ノート名・ページ内の文字", text: $query)
+                    .font(.system(size: 16))
+                    .focused($searchFocused)
+                    .submitLabel(.search)
+                    .autocorrectionDisabled()
+                if !query.isEmpty {
+                    Button { query = "" } label: {
+                        Image(systemName: "xmark.circle.fill")
+                            .foregroundStyle(.tertiary)
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+            .padding(.horizontal, 14)
+            .frame(height: 44)
+            .background(Capsule().fill(Color.primary.opacity(0.05)))
+            if let reading = notes.reading {
+                Text("ページの文字を認識中 \(reading.done) / \(reading.total)")
+                    .font(.system(size: 11))
+                    .foregroundStyle(.secondary)
+                    .monospacedDigit()
+                    .padding(.horizontal, 14)
+            }
+        }
+        .padding(.horizontal, 20)
+        .padding(.top, 8)
+        .transition(.move(edge: .top).combined(with: .opacity))
+    }
+
     /// Making and bringing in notes; the new note opens once its sheet or picker has closed.
     private var withImports: some View {
         library
             .fullScreenCover(item: $open) { ref in
-                NoteEditorView(noteID: ref.id)
+                NoteEditorView(noteID: ref.id, startPage: ref.page)
             }
             .sheet(isPresented: $showSetup, onDismiss: openPending) {
                 NoteSetupSheet { name, paper in
@@ -218,13 +289,16 @@ struct NotesView: View {
         }
     }
 
-    private func noteCell(_ note: Note) -> some View {
-        Button {
-            open = NoteRef(id: note.id)
+    /// `page` is where the search found its text; the note opens there.
+    private func noteCell(_ note: Note, page: Int? = nil) -> some View {
+        let detail = page.map { "\($0 + 1)ページ目に一致" }
+            ?? "\(note.updated.formatted(.dateTime.month().day().hour().minute()))・\(note.pages.count)ページ"
+        return Button {
+            open = NoteRef(id: note.id, page: page ?? 0)
         } label: {
             VStack(alignment: .leading, spacing: 8) {
                 NoteThumbnail(note: note)
-                caption(note.name, "\(note.updated.formatted(.dateTime.month().day().hour().minute()))・\(note.pages.count)ページ")
+                caption(note.name, detail)
             }
             .contentShape(Rectangle())
         }
