@@ -6,7 +6,7 @@ enum HomeRoute: Hashable {
 }
 
 enum HomeMode: String {
-    case calendar, todo, go, mo
+    case calendar, todo, go, mo, notes
 }
 
 struct HomeView: View {
@@ -56,6 +56,9 @@ struct HomeView: View {
     private var isTodo: Bool { mode == HomeMode.todo.rawValue }
     private var isGo: Bool { mode == HomeMode.go.rawValue }
     private var isMo: Bool { mode == HomeMode.mo.rawValue }
+    private var isNotes: Bool { mode == HomeMode.notes.rawValue }
+    /// Go, Mo and Notes bring their own bars; the calendar's toolbar and buttons stay out of them.
+    private var isOwnScreen: Bool { isGo || isMo || isNotes }
 
     private var displayedMonth: Date {
         let id = page ?? 0
@@ -65,7 +68,12 @@ struct HomeView: View {
     /// The screen for the current mode; split out so the body type-checks in reasonable time.
     private var modeContent: some View {
         ZStack {
-            if isMo {
+            if isNotes {
+                NotesView {
+                    withAnimation(.snappy) { mode = HomeMode.calendar.rawValue }
+                }
+                .transition(.move(edge: .bottom).combined(with: .opacity))
+            } else if isMo {
                 MoView {
                     withAnimation(.snappy) { mode = HomeMode.calendar.rawValue }
                 }
@@ -243,7 +251,7 @@ struct HomeView: View {
                     .foregroundStyle(Color.brand)
                     .fixedSize()
                     .transition(.blurReplace)
-            } else if !isGo, !isMo {
+            } else if !isOwnScreen {
                 Button {
                     showMonthPicker = true
                 } label: {
@@ -264,8 +272,8 @@ struct HomeView: View {
         .sharedBackgroundVisibility(.hidden)
 
         ToolbarItemGroup(placement: .topBarTrailing) {
-            // Go keeps a clean screen; Mo's tabs bring their own buttons.
-            if !isGo, !isMo {
+            // Go keeps a clean screen; Mo's tabs and Notes bring their own buttons.
+            if !isOwnScreen {
                 Button {
                     withAnimation(.snappy) {
                         closeTray()
@@ -412,7 +420,7 @@ struct HomeView: View {
     @ViewBuilder
     private var toastLayer: some View {
         // Mo shows the toast above its own tab bar.
-        if let toast = toasts.current, !isMo {
+        if let toast = toasts.current, !isMo, !isNotes {
             UndoToastView(toast: toast) { toasts.performUndo() }
                 .padding(.horizontal, isTodo ? 20 : 20 + 56 + 10)
                 .padding(.bottom, isTodo ? 20 + 56 + 12 : 20)
@@ -423,7 +431,7 @@ struct HomeView: View {
     /// Cal's bottom buttons, over the navigation bar's layer so that holding ＋ dims and blurs everything but ＋.
     @ViewBuilder
     private var calendarBar: some View {
-        if !isMo, !isGo, !isTodo, path.isEmpty {
+        if !isOwnScreen, !isTodo, path.isEmpty {
             ZStack(alignment: .bottomTrailing) {
                 HStack(spacing: 10) {
                     // The same two buttons change their symbols, so the switch animates.

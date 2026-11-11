@@ -1,6 +1,6 @@
 import SwiftUI
 
-/// Cal's ＋. A tap adds an event. Holding it dims and blurs the screen and Td / Go / Mo split out of it as liquid glass;
+/// Cal's ＋. A tap adds an event. Holding it dims and blurs the screen and Notes / Td / Go / Mo split out of it as liquid glass;
 /// slide onto one and let go to open it, or let go on ＋ to add an event.
 /// It keeps the finger's state to itself, so following the finger doesn't redraw the calendar.
 struct CalFab: View {
@@ -27,11 +27,14 @@ struct CalFab: View {
         let mode: HomeMode
         let name: String
         let logo: String
+        /// An SF Symbol standing in until there's a logo.
+        var symbol = false
         var id: HomeMode { mode }
     }
 
     /// Top to bottom; Cal's new event is ＋ itself.
     private static let items = [
+        Item(mode: .notes, name: "Notes", logo: "pencil.and.scribble", symbol: true),
         Item(mode: .todo, name: "Td", logo: "TdLogo"),
         Item(mode: .go, name: "Go", logo: "GoLogo"),
         Item(mode: .mo, name: "Mo", logo: "MoLogo"),
@@ -97,10 +100,17 @@ struct CalFab: View {
 
     private func logo(_ item: Item) -> some View {
         let hovered = hover == item.mode
-        return Image(item.logo)
-            .renderingMode(.template)
-            .resizable()
-            .scaledToFit()
+        return Group {
+            if item.symbol {
+                Image(systemName: item.logo)
+                    .font(.system(size: 20, weight: .semibold))
+            } else {
+                Image(item.logo)
+                    .renderingMode(.template)
+                    .resizable()
+                    .scaledToFit()
+            }
+        }
             .frame(width: 28, height: 28)
             .foregroundStyle(hovered ? Color.white : Color.brand)
             .frame(width: Self.circle, height: Self.circle)

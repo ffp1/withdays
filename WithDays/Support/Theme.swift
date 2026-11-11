@@ -49,6 +49,11 @@ enum SettingsKey {
     static let dimPastEvents = "dimPastEvents"
     static let goTransitMargin = "goTransitMargin"
     static let moMonthStart = "moMonthStart"
+    static let notesPenColor = "notesPenColor"
+    static let notesPenWidth = "notesPenWidth"
+    static let notesMarkerColor = "notesMarkerColor"
+    static let notesMarkerWidth = "notesMarkerWidth"
+    static let notesEraserWhole = "notesEraserWhole"
 }
 
 enum AppTheme: String, CaseIterable, Identifiable {
