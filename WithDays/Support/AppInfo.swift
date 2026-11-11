@@ -23,6 +23,10 @@ enum AppInfo {
 
     /// Newest first. Add an entry here with each release.
     static let changelog: [Release] = [
+        Release(version: "1.6.1", date: "2026.11.12", notes: [
+            "Notes：テキストボックスのフォント",
+            "Notes：線やテープの端をつまんで長さ・向きを調整",
+        ]),
         Release(version: "1.6.0", date: "2026.11.11", notes: [
             "Notes：選択ツール（移動・拡大縮小・重ね順・色変え・カット）",
             "Notes：文字認識（ページの文字をコピー、検索、手書きをテキストに）",

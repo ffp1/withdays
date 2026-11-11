@@ -7,6 +7,7 @@ struct NoteTextStyle: Equatable {
     var color: Int
     var bold: Bool
     var background: Int?
+    var font: String?
 }
 
 /// What was cut, to paste on this page or another.
@@ -32,6 +33,8 @@ protocol NoteOverlayHost: AnyObject {
     var drawing: PKDrawing { get set }
     func beginChange()
     func endChange()
+    /// Saves the tapes / text boxes without making it a step of undo.
+    func itemsChangedQuietly()
     /// The middle of what's on screen, in page points.
     var visibleCenter: CGPoint { get }
 }
@@ -104,6 +107,8 @@ final class NoteOverlayView: UIView, UITextViewDelegate, UIGestureRecognizerDele
         case lasso
         case moveSelection(CGPoint)
         case scaleSelection(anchor: CGPoint, distance: CGFloat)
+        /// One end of a single line or tape follows the finger; the other (`anchor`) stays.
+        case stretchSelection(anchor: CGPoint, from: CGPoint)
     }
 
     private var drag: Drag?
@@ -237,7 +242,7 @@ final class NoteOverlayView: UIView, UITextViewDelegate, UIGestureRecognizerDele
             // Text boxes sit under the tapes (so a tape can hide them), later boxes over earlier ones.
             view.layer.zPosition = CGFloat(order) - CGFloat(items.texts.count) - 1
             if view.text != text.text { view.text = text.text }
-            view.font = .systemFont(ofSize: CGFloat(text.size) * zoom, weight: text.bold ? .bold : .regular)
+            view.font = NoteFont.font(text.font, size: CGFloat(text.size) * zoom, bold: text.bold)
             view.textColor = UIColor(notesHex: text.color)
             view.backgroundColor = text.background.map { UIColor(notesHex: $0) } ?? .clear
             view.layer.cornerRadius = 4 * zoom
@@ -273,14 +278,36 @@ final class NoteOverlayView: UIView, UITextViewDelegate, UIGestureRecognizerDele
             .insetBy(dx: -6, dy: -6)
         boxLayer.path = UIBezierPath(rect: box).cgPath
         boxLayer.isHidden = false
-        let corners = [
-            CGPoint(x: box.minX, y: box.minY), CGPoint(x: box.maxX, y: box.minY),
-            CGPoint(x: box.minX, y: box.maxY), CGPoint(x: box.maxX, y: box.maxY),
-        ]
-        for (corner, point) in zip(cornerLayers, corners) {
-            corner.position = point
-            corner.isHidden = false
+        // A single line or tape is shaped by its two ends; anything else by the box's corners.
+        let points: [CGPoint]
+        if let ends = selectionEnds {
+            points = [ends.0, ends.1].map { CGPoint(x: $0.x * zoom, y: $0.y * zoom) }
+        } else {
+            points = [
+                CGPoint(x: box.minX, y: box.minY), CGPoint(x: box.maxX, y: box.minY),
+                CGPoint(x: box.minX, y: box.maxY), CGPoint(x: box.maxX, y: box.maxY),
+            ]
         }
+        for (index, corner) in cornerLayers.enumerated() {
+            corner.isHidden = index >= points.count
+            if index < points.count { corner.position = points[index] }
+        }
+    }
+
+    /// The two ends of the one stroke or tape that's selected, in page points; nil for any other selection.
+    private var selectionEnds: (CGPoint, CGPoint)? {
+        guard selection.texts.isEmpty, selection.strokes.count + selection.tapes.count == 1 else { return nil }
+        if let id = selection.tapes.first, let tape = items.tapes.first(where: { $0.id == id }) {
+            return (CGPoint(x: tape.x1, y: tape.y1), CGPoint(x: tape.x2, y: tape.y2))
+        }
+        guard let index = selection.strokes.first, let strokes = host?.drawing.strokes, strokes.indices.contains(index) else { return nil }
+        let stroke = strokes[index]
+        guard let first = stroke.path.first, let last = stroke.path.last else { return nil }
+        let start = first.location.applying(stroke.transform)
+        let end = last.location.applying(stroke.transform)
+        // A closed shape (or a dot) has no ends to pull.
+        guard hypot(end.x - start.x, end.y - start.y) > 12 else { return nil }
+        return (start, end)
     }
 
     /// The box being typed in, in this view's coordinates.
@@ -341,6 +368,13 @@ final class NoteOverlayView: UIView, UITextViewDelegate, UIGestureRecognizerDele
     private func pagePoint(_ recognizer: UIGestureRecognizer) -> CGPoint {
         let point = recognizer.location(in: self)
         return CGPoint(x: point.x / zoom, y: point.y / zoom)
+    }
+
+    /// Where the finger first touched: a pan is only recognized after it has moved a little.
+    private func pageOrigin(_ recognizer: UIPanGestureRecognizer) -> CGPoint {
+        let point = recognizer.location(in: self)
+        let moved = recognizer.translation(in: self)
+        return CGPoint(x: (point.x - moved.x) / zoom, y: (point.y - moved.y) / zoom)
     }
 
     private func textFrame(_ id: String) -> CGRect? {
@@ -417,11 +451,10 @@ final class NoteOverlayView: UIView, UITextViewDelegate, UIGestureRecognizerDele
         case .tape:
             // Peel back / put back the topmost tape here.
             guard let index = items.tapes.lastIndex(where: { Self.hit($0, point, slack: 2) }) else { return }
-            host?.beginChange()
             items.tapes[index].revealed.toggle()
             UISelectionFeedbackGenerator().selectionChanged()
             layoutItems()
-            host?.endChange()
+            host?.itemsChangedQuietly()
         case .text:
             if editing != nil {
                 endEditing()
@@ -434,7 +467,8 @@ final class NoteOverlayView: UIView, UITextViewDelegate, UIGestureRecognizerDele
                 let y = max(4, Double(point.y) - textStyle.size * 0.8)
                 let text = NoteText(
                     id: NotesData.newID("text"), x: x, y: y, width: width, text: "",
-                    size: textStyle.size, color: textStyle.color, bold: textStyle.bold, background: textStyle.background
+                    size: textStyle.size, color: textStyle.color, bold: textStyle.bold, background: textStyle.background,
+                    font: textStyle.font
                 )
                 host?.beginChange()
                 items.texts.append(text)
@@ -451,6 +485,7 @@ final class NoteOverlayView: UIView, UITextViewDelegate, UIGestureRecognizerDele
         switch recognizer.state {
         case .began:
             drag = nil
+            let origin = pageOrigin(recognizer)
             switch mode {
             case .none:
                 break
@@ -458,20 +493,24 @@ final class NoteOverlayView: UIView, UITextViewDelegate, UIGestureRecognizerDele
                 let id = NotesData.newID("tape")
                 host?.beginChange()
                 items.tapes.append(NoteTape(
-                    id: id, x1: Double(point.x), y1: Double(point.y), x2: Double(point.x), y2: Double(point.y),
+                    id: id, x1: Double(origin.x), y1: Double(origin.y), x2: Double(point.x), y2: Double(point.y),
                     width: tapeWidth, color: tapeColor, revealed: false
                 ))
                 drag = .tape(id)
+                layoutItems()
             case .text:
-                let touch = recognizer.location(in: self)
+                let touch = CGPoint(x: origin.x * zoom, y: origin.y * zoom)
                 if let editing, !handle.isHidden, hypot(touch.x - handle.center.x, touch.y - handle.center.y) < 24 {
                     drag = .resize(editing)
-                } else if let text = text(at: point) {
+                } else if let text = text(at: origin) {
+                    // Any box can be dragged, typed-in or not; typing in another one ends first.
+                    if let editing, editing != text.id { endEditing() }
                     if editing == nil { host?.beginChange() }
-                    drag = .move(text.id, CGPoint(x: point.x - CGFloat(text.x), y: point.y - CGFloat(text.y)))
+                    drag = .move(text.id, CGPoint(x: origin.x - CGFloat(text.x), y: origin.y - CGFloat(text.y)))
                 }
             case .select:
-                beginSelectionDrag(at: point)
+                beginSelectionDrag(at: origin)
+                if case .lasso = drag { lassoPoints.append(point) }
             }
         case .changed:
             switch drag {
@@ -495,6 +534,18 @@ final class NoteOverlayView: UIView, UITextViewDelegate, UIGestureRecognizerDele
                 showLasso()
             case .moveSelection(let start):
                 transformSelection(CGAffineTransform(translationX: point.x - start.x, y: point.y - start.y), scale: 1)
+            case .stretchSelection(let anchor, let from):
+                let before = hypot(from.x - anchor.x, from.y - anchor.y)
+                let after = hypot(point.x - anchor.x, point.y - anchor.y)
+                guard before > 1, after > 4 else { return }
+                // Turns and scales about the other end, so this end lands under the finger.
+                let angle = atan2(point.y - anchor.y, point.x - anchor.x) - atan2(from.y - anchor.y, from.x - anchor.x)
+                let transform = CGAffineTransform(translationX: anchor.x, y: anchor.y)
+                    .rotated(by: angle)
+                    .scaledBy(x: after / before, y: after / before)
+                    .translatedBy(x: -anchor.x, y: -anchor.y)
+                // A tape keeps its width; a stroke's width follows its length.
+                transformSelection(transform, scale: 1)
             case .scaleSelection(let anchor, let distance):
                 let scale = min(max(hypot(point.x - anchor.x, point.y - anchor.y) / distance, 0.2), 6)
                 let transform = CGAffineTransform(translationX: anchor.x, y: anchor.y)
@@ -524,7 +575,7 @@ final class NoteOverlayView: UIView, UITextViewDelegate, UIGestureRecognizerDele
                 lassoLayer.isHidden = true
                 selection = enclosed(by: lassoPoints)
                 lassoPoints = []
-            case .moveSelection, .scaleSelection:
+            case .moveSelection, .scaleSelection, .stretchSelection:
                 dragStrokes = []
                 host?.endChange()
             }
@@ -572,6 +623,7 @@ final class NoteOverlayView: UIView, UITextViewDelegate, UIGestureRecognizerDele
         items.texts[index].color = textStyle.color
         items.texts[index].bold = textStyle.bold
         items.texts[index].background = textStyle.background
+        items.texts[index].font = textStyle.font
         layoutItems()
     }
 
@@ -655,7 +707,18 @@ final class NoteOverlayView: UIView, UITextViewDelegate, UIGestureRecognizerDele
                 CGPoint(x: box.minX, y: box.maxY), CGPoint(x: box.maxX, y: box.maxY),
             ]
             let reach = 24 / zoom
-            if let corner = corners.firstIndex(where: { hypot($0.x - point.x, $0.y - point.y) < reach }) {
+            if let ends = selectionEnds {
+                // A single line or tape: pull an end; the other stays put.
+                let fromStart = hypot(ends.0.x - point.x, ends.0.y - point.y)
+                let fromEnd = hypot(ends.1.x - point.x, ends.1.y - point.y)
+                if min(fromStart, fromEnd) < reach {
+                    startSelectionChange()
+                    drag = fromStart < fromEnd
+                        ? .stretchSelection(anchor: ends.1, from: ends.0)
+                        : .stretchSelection(anchor: ends.0, from: ends.1)
+                    return
+                }
+            } else if let corner = corners.firstIndex(where: { hypot($0.x - point.x, $0.y - point.y) < reach }) {
                 // Scales from the opposite corner.
                 let anchor = corners[3 - corner]
                 let distance = hypot(point.x - anchor.x, point.y - anchor.y)
@@ -853,6 +916,10 @@ final class NoteOverlayView: UIView, UITextViewDelegate, UIGestureRecognizerDele
         guard !picked.isEmpty else { return }
         let lines = max(1, string.components(separatedBy: "\n").count)
         let size = min(max(Double(bounds.height) / Double(lines) * 0.7, 10), 40)
+        // The text takes the color most of the handwriting was in.
+        var counts: [Int: Int] = [:]
+        for index in picked { counts[strokes[index].ink.color.notesHex, default: 0] += 1 }
+        let color = counts.max { $0.value < $1.value }?.key ?? textStyle.color
         host.beginChange()
         selection = Selection()
         for index in picked.reversed() { strokes.remove(at: index) }
@@ -860,7 +927,7 @@ final class NoteOverlayView: UIView, UITextViewDelegate, UIGestureRecognizerDele
         let text = NoteText(
             id: NotesData.newID("text"), x: Double(bounds.minX), y: Double(bounds.minY),
             width: max(80, Double(bounds.width) + 16), text: string,
-            size: size, color: textStyle.color, bold: false, background: nil
+            size: size, color: color, bold: false, background: nil, font: textStyle.font
         )
         items.texts.append(text)
         layoutItems()

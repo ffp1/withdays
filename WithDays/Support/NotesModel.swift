@@ -58,11 +58,69 @@ struct NoteText: Codable, Identifiable, Hashable {
     var color: Int
     var bold: Bool
     var background: Int?
+    /// A `NoteFont` id; nil is the system font.
+    var font: String?
 
     /// Room between the box's edge and its text, on every side.
     static let inset: CGFloat = 4
 
-    var font: UIFont { .systemFont(ofSize: size, weight: bold ? .bold : .regular) }
+    var uiFont: UIFont { NoteFont.font(font, size: CGFloat(size), bold: bold) }
+}
+
+/// The fonts a text box can be set in: the system's designs by a short id, any other by its family name.
+enum NoteFont {
+    struct Choice: Identifiable {
+        let font: String?
+        let name: String
+        var id: String { font ?? "system" }
+    }
+
+    /// The ones offered first; families this iPhone doesn't have are left out.
+    static let curated: [Choice] = [
+        Choice(font: nil, name: "標準（ゴシック）"),
+        Choice(font: "system-rounded", name: "丸ゴシック（システム）"),
+        Choice(font: "system-serif", name: "セリフ（New York）"),
+        Choice(font: "system-mono", name: "等幅"),
+        Choice(font: "Hiragino Sans", name: "ヒラギノ角ゴ"),
+        Choice(font: "Hiragino Mincho ProN", name: "ヒラギノ明朝"),
+        Choice(font: "Hiragino Maru Gothic ProN", name: "ヒラギノ丸ゴ"),
+        Choice(font: "Klee", name: "クレー（教科書体）"),
+        Choice(font: "Times New Roman", name: "Times New Roman"),
+        Choice(font: "Georgia", name: "Georgia"),
+        Choice(font: "Avenir Next", name: "Avenir Next"),
+        Choice(font: "Futura", name: "Futura"),
+        Choice(font: "American Typewriter", name: "American Typewriter"),
+        Choice(font: "Courier New", name: "Courier New"),
+        Choice(font: "Noteworthy", name: "Noteworthy"),
+        Choice(font: "Marker Felt", name: "Marker Felt"),
+        Choice(font: "Chalkboard SE", name: "Chalkboard"),
+        Choice(font: "Snell Roundhand", name: "Snell Roundhand"),
+    ].filter { choice in
+        guard let font = choice.font, !font.hasPrefix("system-") else { return true }
+        return !UIFont.fontNames(forFamilyName: font).isEmpty
+    }
+
+    /// Every family on this iPhone.
+    static let all: [String] = UIFont.familyNames.sorted()
+
+    static func name(_ font: String?) -> String {
+        curated.first { $0.font == font }?.name ?? font ?? "標準（ゴシック）"
+    }
+
+    static func font(_ font: String?, size: CGFloat, bold: Bool) -> UIFont {
+        let system = UIFont.systemFont(ofSize: size, weight: bold ? .bold : .regular)
+        guard let font else { return system }
+        let designs: [String: UIFontDescriptor.SystemDesign] = [
+            "system-rounded": .rounded, "system-serif": .serif, "system-mono": .monospaced,
+        ]
+        if let design = designs[font] {
+            return system.fontDescriptor.withDesign(design).map { UIFont(descriptor: $0, size: size) } ?? system
+        }
+        guard !UIFont.fontNames(forFamilyName: font).isEmpty else { return system }
+        let family = UIFontDescriptor(fontAttributes: [.family: font])
+        let descriptor = bold ? (family.withSymbolicTraits(.traitBold) ?? family) : family
+        return UIFont(descriptor: descriptor, size: size)
+    }
 }
 
 /// What sits on a page over the handwriting, in a file of its own next to the strokes.
@@ -93,6 +151,7 @@ struct NoteToolSettings: Codable, Equatable {
     var text = NoteInk(color: 0x1C1C1E, width: 16, colors: palette, widths: [12, 16, 22, 30])
     var textBold = false
     var textBackground: Int?
+    var textFont: String?
     var eraserWidth = 20.0
     var eraserWidths = [10.0, 20, 35, 60]
     /// The eraser removes whole strokes, or only what it touches.
@@ -289,7 +348,7 @@ enum NoteItemsRenderer {
         for text in items.texts {
             let inner = CGFloat(text.width) - NoteText.inset * 2
             let string = NSAttributedString(string: text.text, attributes: [
-                .font: text.font,
+                .font: text.uiFont,
                 .foregroundColor: UIColor(notesHex: text.color),
             ])
             let bounds = string.boundingRect(

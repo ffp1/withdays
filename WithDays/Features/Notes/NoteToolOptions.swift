@@ -12,6 +12,8 @@ struct NoteToolOptions: View {
     let tool: NoteTool
     @Binding var settings: NoteToolSettings
 
+    @State private var showFonts = false
+
     var body: some View {
         VStack(spacing: 12) {
             switch tool {
@@ -51,8 +53,31 @@ struct NoteToolOptions: View {
         .glassEffect(.regular, in: .rect(cornerRadius: 22))
     }
 
-    /// Bold, and a fill behind the text.
+    /// The font, bold, and a fill behind the text.
+    @ViewBuilder
     private var textExtras: some View {
+        Button { showFonts = true } label: {
+            HStack(spacing: 6) {
+                Text(NoteFont.name(settings.textFont))
+                    .font(Font(NoteFont.font(settings.textFont, size: 15, bold: false) as CTFont))
+                    .lineLimit(1)
+                Spacer(minLength: 0)
+                Image(systemName: "chevron.up.chevron.down")
+                    .font(.system(size: 11, weight: .bold))
+                    .foregroundStyle(.secondary)
+            }
+            .foregroundStyle(.primary)
+            .padding(.horizontal, 14)
+            .frame(height: 36)
+            .background(Capsule().fill(Color.primary.opacity(0.06)))
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .sheet(isPresented: $showFonts) {
+            NoteFontSheet(selection: $settings.textFont)
+                .presentationDetents([.medium, .large])
+                .presentationDragIndicator(.visible)
+        }
         HStack(spacing: 10) {
             Button { settings.textBold.toggle() } label: {
                 Image(systemName: "bold")
@@ -251,6 +276,55 @@ struct NoteSelectionOptions: View {
             .frame(maxWidth: .infinity)
             .frame(height: 40)
             .background(Capsule().fill(Color.primary.opacity(0.06)))
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+    }
+}
+
+/// The fonts for text boxes: the picked ones first, then every family on the iPhone, each shown in itself.
+struct NoteFontSheet: View {
+    @Binding var selection: String?
+
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        List {
+            Section("おすすめ") {
+                ForEach(NoteFont.curated) { choice in
+                    row(choice.font, choice.name)
+                }
+            }
+            Section("すべてのフォント") {
+                ForEach(NoteFont.all, id: \.self) { family in
+                    row(family, family)
+                }
+            }
+        }
+        .listStyle(.insetGrouped)
+    }
+
+    private func row(_ font: String?, _ name: String) -> some View {
+        Button {
+            selection = font
+            dismiss()
+        } label: {
+            HStack {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("あア亜 Abc 123")
+                        .font(Font(NoteFont.font(font, size: 18, bold: false) as CTFont))
+                        .foregroundStyle(.primary)
+                    Text(name)
+                        .font(.system(size: 11))
+                        .foregroundStyle(.secondary)
+                }
+                Spacer()
+                if selection == font {
+                    Image(systemName: "checkmark")
+                        .font(.system(size: 14, weight: .bold))
+                        .foregroundStyle(Color.brand)
+                }
+            }
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)

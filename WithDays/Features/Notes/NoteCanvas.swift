@@ -50,8 +50,8 @@ final class NoteCanvasController {
     }
 
     fileprivate func refresh() {
-        canUndo = page?.canvas.undoManager?.canUndo ?? false
-        canRedo = page?.canvas.undoManager?.canRedo ?? false
+        canUndo = page?.canUndo ?? false
+        canRedo = page?.canRedo ?? false
         hasSelection = !(page?.overlay.selection.isEmpty ?? true)
         hasSelectedStrokes = !(page?.overlay.selection.strokes.isEmpty ?? true)
         canPaste = NoteClipboard.clip != nil
@@ -98,6 +98,7 @@ struct NoteCanvas: UIViewRepresentable {
         coordinator.loading = true
         view.canvas.drawing = load()
         coordinator.loading = false
+        view.resetHistory()
         view.canvas.delegate = coordinator
         view.onSaveItems = { [weak coordinator] in coordinator?.parent.saveItems($0) }
         view.onTurn = { [weak coordinator] in coordinator?.parent.onTurn($0) }
@@ -151,7 +152,7 @@ struct NoteCanvas: UIViewRepresentable {
 
         func canvasViewDrawingDidChange(_ canvasView: PKCanvasView) {
             guard !loading else { return }
-            parent.controller.refresh()
+            view?.drawingChanged()
             // Saved a moment after the last change, not on every point.
             pending?.cancel()
             let work = DispatchWorkItem { [weak self] in self?.saveNow() }
@@ -174,6 +175,15 @@ struct NoteCanvas: UIViewRepresentable {
 
         func scrollViewDidZoom(_ scrollView: UIScrollView) {
             view?.place()
+            view?.moved()
+        }
+
+        func scrollViewDidScroll(_ scrollView: UIScrollView) {
+            view?.moved()
+        }
+
+        func scrollViewDidEndZooming(_ scrollView: UIScrollView, with zoomed: UIView?, atScale scale: CGFloat) {
+            view?.sharpen()
         }
 
         func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer, shouldRecognizeSimultaneouslyWith other: UIGestureRecognizer) -> Bool {
@@ -282,14 +292,26 @@ final class NotePageView: UIView, UIGestureRecognizerDelegate, NoteOverlayHost {
     private var marginSwipe: (start: CGPoint, now: CGPoint)?
     private var erasing = false
 
-    /// The strokes, tapes and text boxes before a change, to undo it as one step.
+    /// The strokes, tapes and text boxes at one moment. Undo and redo put a whole state back;
+    /// PencilKit's own undo isn't used, so the two can never disagree.
     private struct PageState {
-        /// nil when only the tapes / text boxes are put back (the eraser: PencilKit undoes its own strokes).
-        let drawing: PKDrawing?
+        let drawing: PKDrawing
         let items: NoteItems
     }
 
-    private var changeBase: PageState?
+    private var current = PageState(drawing: PKDrawing(), items: NoteItems())
+    private var past: [PageState] = []
+    private var future: [PageState] = []
+    /// Between `beginChange` and `endChange`: everything in between is one step.
+    private var inChange = false
+    private var restoring = false
+    /// A finger is down; what it does becomes one step when it lifts.
+    private var touching = false
+    /// When the page last scrolled or zoomed; a tap right after isn't an undo.
+    private var lastMotion = Date.distantPast
+
+    var canUndo: Bool { !past.isEmpty }
+    var canRedo: Bool { !future.isEmpty }
 
     init(page: NotePage, pdf: PDFPage?, image: UIImage?, items: NoteItems) {
         self.page = page
@@ -324,11 +346,13 @@ final class NotePageView: UIView, UIGestureRecognizerDelegate, NoteOverlayHost {
         tracker.onEnded = { [weak self] in self?.touchEnded(lifted: $0) }
         canvas.addGestureRecognizer(tracker)
 
-        // Two fingers tap to undo, three to redo.
-        for (touches, action) in [(2, #selector(undo)), (3, #selector(redo))] {
+        // Two fingers tap to undo, three to redo; not when the fingers were scrolling or pinching.
+        for (touches, action) in [(2, #selector(tappedUndo)), (3, #selector(tappedRedo))] {
             let tap = UITapGestureRecognizer(target: self, action: action)
             tap.numberOfTouchesRequired = touches
             tap.delegate = self
+            tap.require(toFail: canvas.panGestureRecognizer)
+            if let pinch = canvas.pinchGestureRecognizer { tap.require(toFail: pinch) }
             addGestureRecognizer(tap)
         }
 
@@ -362,7 +386,8 @@ final class NotePageView: UIView, UIGestureRecognizerDelegate, NoteOverlayHost {
         overlay.tapeWidth = settings.tape.width
         overlay.tapeColor = settings.tape.color
         overlay.textStyle = NoteTextStyle(
-            size: settings.text.width, color: settings.text.color, bold: settings.textBold, background: settings.textBackground
+            size: settings.text.width, color: settings.text.color, bold: settings.textBold,
+            background: settings.textBackground, font: settings.textFont
         )
         switch tool {
         case .select: overlay.mode = .select
@@ -396,50 +421,96 @@ final class NotePageView: UIView, UIGestureRecognizerDelegate, NoteOverlayHost {
         return CGPoint(x: min(max(x, 20), page.size.width - 20), y: min(max(y, 20), page.size.height - 20))
     }
 
+    /// The page as loaded is where undo stops.
+    func resetHistory() {
+        current = PageState(drawing: canvas.drawing, items: overlay.items)
+        past = []
+        future = []
+    }
+
     /// Marks where a change to the strokes or the tapes / text boxes starts.
     func beginChange() {
-        if changeBase == nil { changeBase = PageState(drawing: canvas.drawing, items: overlay.items) }
+        inChange = true
     }
 
-    /// Ends the change: if anything is different it can be undone as one step, and the tapes / text boxes are saved.
+    /// Ends the change: if anything is different it becomes one step of undo.
     func endChange() {
-        endChange(strokes: true)
+        guard inChange else { return }
+        inChange = false
+        commit()
     }
 
-    /// `strokes` is false where PencilKit keeps its own undo for the strokes and only the items are ours.
-    private func endChange(strokes: Bool) {
-        guard let base = changeBase else { return }
-        changeBase = nil
-        let itemsChanged = base.items != overlay.items
-        let strokesChanged = strokes && base.drawing?.dataRepresentation() != canvas.drawing.dataRepresentation()
-        guard itemsChanged || strokesChanged else { return }
-        let undo = PageState(drawing: strokes ? base.drawing : nil, items: base.items)
-        canvas.undoManager?.registerUndo(withTarget: self) { $0.restore(undo) }
-        if itemsChanged { onSaveItems(overlay.items) }
+    /// The tapes changed in a way that isn't a step of its own (peeling one back): saved, not undoable.
+    func itemsChangedQuietly() {
+        current = PageState(drawing: current.drawing, items: overlay.items)
+        onSaveItems(overlay.items)
+    }
+
+    /// PencilKit changed the strokes. While a finger is down or a change is marked, that waits for its end.
+    func drawingChanged() {
+        guard !inChange, !restoring, !touching else { return }
+        commit()
+    }
+
+    /// Makes what's on the page now a step, if it differs from the last one.
+    private func commit() {
+        let now = PageState(drawing: canvas.drawing, items: overlay.items)
+        let itemsChanged = now.items != current.items
+        guard itemsChanged || Self.differ(now.drawing, current.drawing) else { return }
+        past.append(current)
+        if past.count > 100 { past.removeFirst() }
+        future = []
+        current = now
+        if itemsChanged { onSaveItems(now.items) }
         onHistory()
     }
 
-    /// Undo and redo both come through here: put a state back, and make that undoable in turn.
-    private func restore(_ state: PageState) {
-        changeBase = nil
-        beginChange()
-        if let drawing = state.drawing { canvas.drawing = drawing }
+    private static func differ(_ a: PKDrawing, _ b: PKDrawing) -> Bool {
+        a.strokes.count != b.strokes.count || a.dataRepresentation() != b.dataRepresentation()
+    }
+
+    private func show(_ state: PageState) {
+        restoring = true
+        canvas.drawing = state.drawing
         overlay.replace(state.items)
-        endChange(strokes: state.drawing != nil)
-    }
-
-    @objc func undo() {
-        overlay.endEditing()
-        overlay.clearSelection()
-        canvas.undoManager?.undo()
+        restoring = false
+        let itemsChanged = state.items != current.items
+        current = state
+        if itemsChanged { onSaveItems(state.items) }
         onHistory()
     }
 
-    @objc func redo() {
+    func undo() {
         overlay.endEditing()
         overlay.clearSelection()
-        canvas.undoManager?.redo()
-        onHistory()
+        commit()
+        guard let previous = past.popLast() else { return }
+        future.append(current)
+        show(previous)
+    }
+
+    func redo() {
+        overlay.endEditing()
+        overlay.clearSelection()
+        commit()
+        guard let next = future.popLast() else { return }
+        past.append(current)
+        show(next)
+    }
+
+    /// The page scrolled or zoomed.
+    func moved() {
+        lastMotion = Date()
+    }
+
+    @objc private func tappedUndo() {
+        guard Date().timeIntervalSince(lastMotion) > 0.4 else { return }
+        undo()
+    }
+
+    @objc private func tappedRedo() {
+        guard Date().timeIntervalSince(lastMotion) > 0.4 else { return }
+        redo()
     }
 
     // MARK: Layout
@@ -461,6 +532,12 @@ final class NotePageView: UIView, UIGestureRecognizerDelegate, NoteOverlayHost {
             canvas.zoomScale = fit
         }
         place()
+        sharpen()
+    }
+
+    /// Redraws the paper at the zoom it's shown at, so its lines and any PDF stay sharp.
+    func sharpen() {
+        paper.sharpen(zoom: canvas.zoomScale, screen: window?.screen.scale ?? traitCollection.displayScale)
     }
 
     /// Keeps the drawable area the page's size at this zoom, centers it, and puts the paper under it
@@ -512,6 +589,7 @@ final class NotePageView: UIView, UIGestureRecognizerDelegate, NoteOverlayHost {
     }
 
     private func touchBegan(_ point: CGPoint) {
+        touching = true
         let start = pagePoint(point)
         // Beside the page: nothing to write on, so a sideways swipe turns the page.
         guard CGRect(origin: .zero, size: page.size).contains(start) else {
@@ -521,7 +599,6 @@ final class NotePageView: UIView, UIGestureRecognizerDelegate, NoteOverlayHost {
         }
         if erasesItems {
             erasing = true
-            beginChange()
             overlay.erase(at: start)
         }
         guard lineInk != nil else { return }
@@ -557,6 +634,9 @@ final class NotePageView: UIView, UIGestureRecognizerDelegate, NoteOverlayHost {
     }
 
     private func touchEnded(lifted: Bool) {
+        touching = false
+        // Whatever the finger did (a stroke, erasing strokes and tapes) is one step.
+        defer { if !inChange { commit() } }
         holdWork?.cancel()
         holdWork = nil
         if let swipe = marginSwipe {
@@ -566,10 +646,7 @@ final class NotePageView: UIView, UIGestureRecognizerDelegate, NoteOverlayHost {
             if lifted, abs(dx) > 50, abs(dx) > abs(dy) * 2 { onTurn(dx < 0 ? 1 : -1) }
             return
         }
-        if erasing {
-            erasing = false
-            endChange(strokes: false)
-        }
+        erasing = false
         strokePoints = []
         guard let corners = vertices else { return }
         vertices = nil
@@ -663,20 +740,13 @@ final class NotePageView: UIView, UIGestureRecognizerDelegate, NoteOverlayHost {
         var strokes = canvas.drawing.strokes
         if strokes.count > strokeCount { strokes = Array(strokes.prefix(strokeCount)) }
         strokes.append(stroke)
-        beginChange()
         canvas.drawing = PKDrawing(strokes: strokes)
-        endChange()
     }
 }
 
-/// The paper, drawn in tiles so it stays sharp zoomed in without a huge bitmap.
+/// The paper. It's drawn on the main thread only (PDF pages can't be drawn from several threads at once),
+/// stretched while pinching and redrawn sharp when the zoom settles.
 final class NotePaperView: UIView {
-    private final class Tiles: CATiledLayer {
-        override class func fadeDuration() -> CFTimeInterval { 0 }
-    }
-
-    override class var layerClass: AnyClass { Tiles.self }
-
     var page: NotePage
     private let pdf: PDFPage?
     private let image: UIImage?
@@ -687,6 +757,7 @@ final class NotePaperView: UIView {
         self.image = image
         super.init(frame: CGRect(origin: .zero, size: page.size))
         backgroundColor = .white
+        isOpaque = true
         isUserInteractionEnabled = false
         layer.anchorPoint = .zero
         layer.position = .zero
@@ -694,11 +765,16 @@ final class NotePaperView: UIView {
         layer.shadowOpacity = 0.12
         layer.shadowRadius = 6
         layer.shadowOffset = CGSize(width: 0, height: 2)
-        if let tiles = layer as? CATiledLayer {
-            tiles.tileSize = CGSize(width: 512, height: 512)
-            tiles.levelsOfDetail = 4
-            tiles.levelsOfDetailBias = 3
-        }
+        layer.shadowPath = UIBezierPath(rect: bounds).cgPath
+    }
+
+    /// As many pixels as the zoom needs, up to a size that keeps the bitmap's memory in hand.
+    func sharpen(zoom: CGFloat, screen: CGFloat) {
+        let limit = 3600 / max(page.size.width, page.size.height)
+        let scale = max(1, min(screen * zoom, limit))
+        guard abs(scale - contentScaleFactor) > 0.01 else { return }
+        contentScaleFactor = scale
+        setNeedsDisplay()
     }
 
     @available(*, unavailable)
