@@ -127,10 +127,29 @@ enum SlideAssets {
         return cache
     }()
 
-    static func image(_ name: String, deck: UUID) -> UIImage? {
-        let key = "\(deck.uuidString)/\(name)" as NSString
+    /// The image at full resolution, or (`preview`) no larger than the screen needs: drawing a photo's full
+    /// size on every change made moving images slow.
+    static func image(_ name: String, deck: UUID, preview: Bool = false) -> UIImage? {
+        let key = "\(deck.uuidString)/\(name)\(preview ? "#preview" : "")" as NSString
         if let cached = cache.object(forKey: key) { return cached }
-        guard let image = UIImage(contentsOfFile: SlidesFiles.asset(name, deck: deck).path) else { return nil }
+        let url = SlidesFiles.asset(name, deck: deck)
+        let image: UIImage?
+        if preview {
+            let options: [CFString: Any] = [
+                kCGImageSourceCreateThumbnailFromImageAlways: true,
+                kCGImageSourceCreateThumbnailWithTransform: true,
+                kCGImageSourceThumbnailMaxPixelSize: 1600,
+            ]
+            if let source = CGImageSourceCreateWithURL(url as CFURL, nil),
+               let thumbnail = CGImageSourceCreateThumbnailAtIndex(source, 0, options as CFDictionary) {
+                image = UIImage(cgImage: thumbnail)
+            } else {
+                image = nil
+            }
+        } else {
+            image = UIImage(contentsOfFile: url.path)
+        }
+        guard let image else { return nil }
         cache.setObject(image, forKey: key)
         return image
     }

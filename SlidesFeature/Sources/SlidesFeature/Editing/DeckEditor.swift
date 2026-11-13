@@ -46,6 +46,8 @@ final class DeckEditor {
     }
 
     var editing: EditTarget?
+    /// The lines a dragged element is lined up with, while it's dragged.
+    var snapLines: [SnapLine] = []
 
     private var history = EditHistory<Snapshot>(limit: 100)
     private var interactionStart: Snapshot?
@@ -272,7 +274,10 @@ final class DeckEditor {
     /// Typing: a burst of changes to one box is one step.
     func setText(_ id: UUID, _ text: RichText) {
         changeElement(id, coalesce: "text-\(id)") { element in
-            if case .text = element.content { element.content = .text(TextBoxElement(text: text)) }
+            if case .text(var box) = element.content {
+                box.text = text
+                element.content = .text(box)
+            }
         }
     }
 

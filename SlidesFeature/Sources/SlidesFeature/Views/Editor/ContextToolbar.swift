@@ -78,6 +78,9 @@ struct ContextToolbar: View {
         } label: {
             itemLabel("配置", text.hAlign.icon)
         }
+        .menuStyle(.button)
+        .buttonStyle(.plain)
+        .tint(.primary)
     }
 
     private func more(_ element: SlideElement) -> some View {
@@ -93,6 +96,9 @@ struct ContextToolbar: View {
         } label: {
             itemLabel("その他", "ellipsis")
         }
+        .menuStyle(.button)
+        .buttonStyle(.plain)
+        .tint(.primary)
         .accessibilityLabel("その他")
     }
 
@@ -107,6 +113,7 @@ struct ContextToolbar: View {
         VStack(spacing: 2) {
             Image(systemName: icon)
                 .font(.system(size: 17, weight: .semibold))
+                .frame(height: 22)
             Text(title)
                 .font(.system(size: 10, weight: .semibold))
                 .lineLimit(1)
@@ -129,7 +136,6 @@ struct InsertSheet: View {
     var insertTable: (_ rows: Int, _ columns: Int) -> Void
 
     @Environment(\.dismiss) private var dismiss
-    @State private var choosingImage = false
 
     var body: some View {
         NavigationStack {
@@ -137,7 +143,19 @@ struct InsertSheet: View {
                 Button { pick(insertText) } label: {
                     Label("テキストボックス", systemImage: "textbox")
                 }
-                Button { choosingImage = true } label: {
+                NavigationLink {
+                    List {
+                        Button { pick(insertImageFromPhotos) } label: {
+                            Label("写真ライブラリ", systemImage: "photo.on.rectangle")
+                        }
+                        Button { pick(insertImageFromFiles) } label: {
+                            Label("ファイル", systemImage: "folder")
+                        }
+                    }
+                    .foregroundStyle(.primary)
+                    .navigationTitle("画像")
+                    .navigationBarTitleDisplayMode(.inline)
+                } label: {
                     Label("画像", systemImage: "photo")
                 }
                 NavigationLink {
@@ -159,10 +177,6 @@ struct InsertSheet: View {
             .foregroundStyle(.primary)
             .navigationTitle("挿入")
             .navigationBarTitleDisplayMode(.inline)
-            .confirmationDialog("画像", isPresented: $choosingImage, titleVisibility: .visible) {
-                Button("写真から選ぶ") { pick(insertImageFromPhotos) }
-                Button("ファイルから選ぶ") { pick(insertImageFromFiles) }
-            }
         }
     }
 

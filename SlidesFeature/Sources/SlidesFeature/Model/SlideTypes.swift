@@ -428,6 +428,8 @@ struct TableElement: Codable, Hashable {
 
 struct TextBoxElement: Codable, Hashable {
     var text: RichText
+    /// Shown in gray in the editor while the box is empty (「タイトルを入力」…); never played or exported.
+    var placeholder: String?
 }
 
 enum ElementContent: Codable, Hashable {

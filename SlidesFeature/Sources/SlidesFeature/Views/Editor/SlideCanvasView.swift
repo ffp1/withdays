@@ -1,8 +1,9 @@
 import SwiftUI
 
 /// The slide being edited, fitted to the space with margins. A tap selects an element and a tap on the selected
-/// text box (or table cell) starts typing; a drag that starts on an element moves it; a sideways swipe that starts
-/// on empty slide or outside the slide goes to the next / previous slide.
+/// text box (or table cell) starts typing; a drag that starts on an element moves it (snapping to the slide, the
+/// guides and other elements). A sideways swipe on empty slide or outside it changes slide: to the right for the
+/// next one. Pinching with nothing selected zooms the view; zoomed in, a drag on empty space moves it around.
 struct SlideCanvasView: View {
     @Bindable var editor: DeckEditor
     let textController: TextEditingController
@@ -12,35 +13,68 @@ struct SlideCanvasView: View {
 
     @State private var dragOrigin: SlideElement?
     @State private var pinchOrigin: SlideElement?
-    /// +1 when the last switch went forward, for the slide's direction.
+    /// True when the last switch went to the next slide, for the slide's direction.
     @State private var forward = true
+    /// The view's zoom (1 = the whole slide fits) and how far it's moved.
+    @State private var zoom: CGFloat = 1
+    @State private var pan: CGSize = .zero
+    @State private var zoomStart: CGFloat?
+    @State private var panStart: CGSize?
 
     var body: some View {
         GeometryReader { geo in
-            let scale = min((geo.size.width - 32) / 1920, (geo.size.height - 32) / 1080)
+            let fit = min((geo.size.width - 32) / 1920, (geo.size.height - 32) / 1080)
+            let scale = fit * zoom
             let size = CGSize(width: 1920 * scale, height: 1080 * scale)
             ZStack {
                 Color.clear
                     .contentShape(Rectangle())
                     .onTapGesture { deselect() }
-                    .gesture(swipe)
-                slide(scale: scale, size: size)
+                    .gesture(emptyDrag(size: size, area: geo.size))
+                slide(scale: scale, size: size, area: geo.size)
                     .frame(width: size.width, height: size.height)
+                    .offset(pan)
                     .id(editor.current.id)
                     .transition(.asymmetric(
-                        insertion: .move(edge: forward ? .trailing : .leading).combined(with: .opacity),
-                        removal: .move(edge: forward ? .leading : .trailing).combined(with: .opacity)
+                        // The next slide comes in from the left, following a swipe to the right.
+                        insertion: .move(edge: forward ? .leading : .trailing).combined(with: .opacity),
+                        removal: .move(edge: forward ? .trailing : .leading).combined(with: .opacity)
                     ))
             }
             .frame(width: geo.size.width, height: geo.size.height)
+            .contentShape(Rectangle())
+            .simultaneousGesture(pinch(fit: fit, area: geo.size, slideSize: CGSize(width: 1920 * fit, height: 1080 * fit)))
             .clipped()
+            .overlay(alignment: .topTrailing) {
+                if zoom > 1.01 {
+                    Button {
+                        withAnimation(.snappy) {
+                            zoom = 1
+                            pan = .zero
+                        }
+                    } label: {
+                        Text("\(Int((zoom * 100).rounded()))%")
+                            .font(.system(size: 13, weight: .bold))
+                            .monospacedDigit()
+                            .padding(.horizontal, 12)
+                            .frame(height: 32)
+                    }
+                    .buttonStyle(.glass)
+                    .padding(10)
+                    .accessibilityLabel("等倍に戻す")
+                }
+            }
         }
-        .onChange(of: editor.currentIndex) { old, new in forward = new >= old }
+        .onChange(of: editor.currentIndex) { old, new in
+            forward = new >= old
+            zoom = 1
+            pan = .zero
+        }
     }
 
     // MARK: Slide
 
-    private func slide(scale: CGFloat, size: CGSize) -> some View {
+    private func slide(scale: CGFloat, size: CGSize, area: CGSize) -> some View {
         let slide = editor.current
         return ZStack(alignment: .topLeading) {
             ZStack(alignment: .topLeading) {
@@ -48,7 +82,7 @@ struct SlideCanvasView: View {
                     .frame(width: size.width, height: size.height)
                     .contentShape(Rectangle())
                     .onTapGesture { deselect() }
-                    .gesture(swipe)
+                    .gesture(emptyDrag(size: size, area: area))
                 ForEach(slide.elements) { element in
                     elementView(element, scale: scale)
                 }
@@ -61,8 +95,9 @@ struct SlideCanvasView: View {
                 GuidesOverlay()
                     .frame(width: size.width, height: size.height)
             }
+            snapLines(scale: scale, size: size)
             if let element = editor.selectedElement {
-                SelectionOverlay(editor: editor, element: element, scale: scale, editing: editor.editing != nil)
+                SelectionOverlay(editor: editor, element: element, scale: scale, editing: editor.editing != nil, guides: showsGuides)
             }
             if let editing = editor.editing, let element = editor.selectedElement, let text = editor.editingText() {
                 textEditor(editing, element: element, text: text, scale: scale)
@@ -70,13 +105,31 @@ struct SlideCanvasView: View {
         }
         .frame(width: size.width, height: size.height, alignment: .topLeading)
         .coordinateSpace(.named("slide"))
-        .simultaneousGesture(pinch(scale: scale))
+    }
+
+    /// Where a dragged element lines up.
+    private func snapLines(scale: CGFloat, size: CGSize) -> some View {
+        Canvas { context, _ in
+            for line in editor.snapLines {
+                var path = Path()
+                if line.vertical {
+                    path.move(to: CGPoint(x: line.position * scale, y: 0))
+                    path.addLine(to: CGPoint(x: line.position * scale, y: size.height))
+                } else {
+                    path.move(to: CGPoint(x: 0, y: line.position * scale))
+                    path.addLine(to: CGPoint(x: size.width, y: line.position * scale))
+                }
+                context.stroke(path, with: .color(Color(red: 0.95, green: 0.25, blue: 0.55)), lineWidth: 1)
+            }
+        }
+        .frame(width: size.width, height: size.height)
+        .allowsHitTesting(false)
     }
 
     private func elementView(_ element: SlideElement, scale: CGFloat) -> some View {
         let frame = element.frame.cg
         let padding = SlideRenderer.padding
-        return ElementRenderView(element: displayed(element), deck: editor.deckID, scale: scale)
+        return ElementRenderView(element: displayed(element), deck: editor.deckID, scale: scale, placeholders: true)
             .frame(width: (frame.width + padding * 2) * scale, height: (frame.height + padding * 2) * scale)
             // The padding (room for strokes and shadows) only counts a little for touches.
             .contentShape(Rectangle().inset(by: max(padding * scale - 10, 0)))
@@ -195,31 +248,58 @@ struct SlideCanvasView: View {
                 }
                 guard var moved = dragOrigin else { return }
                 moved.move(by: Double(value.translation.width / scale), Double(value.translation.height / scale))
+                let snapper = Snapper(slide: editor.current, excluding: element.id, guides: showsGuides, threshold: Double(8 / scale))
+                let lines = snapper.snapMove(&moved)
+                if lines != editor.snapLines { editor.snapLines = lines }
                 editor.changeElement(element.id) { $0 = moved }
             }
             .onEnded { _ in
                 dragOrigin = nil
+                editor.snapLines = []
                 editor.endInteraction()
             }
     }
 
-    /// Pinching resizes the selected element around its middle.
-    private func pinch(scale: CGFloat) -> some Gesture {
+    /// With an element selected, pinching resizes it around its middle; otherwise it zooms the view.
+    private func pinch(fit: CGFloat, area: CGSize, slideSize: CGSize) -> some Gesture {
         MagnifyGesture()
             .onChanged { value in
-                guard editor.editing == nil, let selected = editor.selectedElement else { return }
-                if pinchOrigin?.id != selected.id {
-                    editor.beginInteraction()
-                    pinchOrigin = selected
+                if editor.editing == nil, let selected = editor.selectedElement {
+                    if pinchOrigin?.id != selected.id {
+                        editor.beginInteraction()
+                        pinchOrigin = selected
+                    }
+                    guard let origin = pinchOrigin else { return }
+                    let factor = max(0.1, min(Double(value.magnification), 10))
+                    editor.changeElement(origin.id) { $0 = Self.scaled(origin, by: factor) }
+                    return
                 }
-                guard let origin = pinchOrigin else { return }
-                let factor = max(0.1, min(Double(value.magnification), 10))
-                editor.changeElement(origin.id) { $0 = Self.scaled(origin, by: factor) }
+                if zoomStart == nil { zoomStart = zoom }
+                zoom = min(max((zoomStart ?? 1) * value.magnification, 1), 5)
+                pan = clampedPan(pan, area: area, slideSize: slideSize)
             }
             .onEnded { _ in
-                pinchOrigin = nil
-                editor.endInteraction()
+                if pinchOrigin != nil {
+                    pinchOrigin = nil
+                    editor.endInteraction()
+                }
+                zoomStart = nil
+                if zoom < 1.05 {
+                    withAnimation(.snappy) {
+                        zoom = 1
+                        pan = .zero
+                    }
+                }
             }
+    }
+
+    /// Keeps the zoomed slide from leaving the view.
+    private func clampedPan(_ pan: CGSize, area: CGSize, slideSize: CGSize) -> CGSize {
+        let width = slideSize.width * zoom
+        let height = slideSize.height * zoom
+        let limitX = max(0, (width - area.width) / 2 + 40)
+        let limitY = max(0, (height - area.height) / 2 + 40)
+        return CGSize(width: min(max(pan.width, -limitX), limitX), height: min(max(pan.height, -limitY), limitY))
     }
 
     static func scaled(_ element: SlideElement, by factor: Double) -> SlideElement {
@@ -243,12 +323,28 @@ struct SlideCanvasView: View {
         return result
     }
 
-    private var swipe: some Gesture {
-        DragGesture(minimumDistance: 24)
+    /// On empty space: moves the zoomed view around, or (not zoomed) swipes to another slide.
+    private func emptyDrag(size: CGSize, area: CGSize) -> some Gesture {
+        DragGesture(minimumDistance: 12)
+            .onChanged { value in
+                guard zoom > 1.01 else { return }
+                if panStart == nil { panStart = pan }
+                let start = panStart ?? .zero
+                let slideSize = CGSize(width: size.width / zoom, height: size.height / zoom)
+                pan = clampedPan(
+                    CGSize(width: start.width + value.translation.width, height: start.height + value.translation.height),
+                    area: area, slideSize: slideSize
+                )
+            }
             .onEnded { value in
+                if panStart != nil {
+                    panStart = nil
+                    return
+                }
                 let dx = value.translation.width
                 guard abs(dx) > 60, abs(dx) > abs(value.translation.height) * 1.5 else { return }
-                let target = editor.currentIndex + (dx < 0 ? 1 : -1)
+                // To the right for the next slide.
+                let target = editor.currentIndex + (dx > 0 ? 1 : -1)
                 guard editor.slides.indices.contains(target) else { return }
                 finishTyping()
                 withAnimation(.snappy(duration: 0.3)) { editor.currentIndex = target }
@@ -268,17 +364,23 @@ struct SlideCanvasView: View {
 }
 
 /// The selected element's frame: eight handles to resize, one above to turn it. A line has a handle on each end.
+/// Edges and ends snap like moving does; turning settles on every 15°.
 struct SelectionOverlay: View {
     @Bindable var editor: DeckEditor
     let element: SlideElement
     let scale: CGFloat
     let editing: Bool
+    let guides: Bool
 
     @State private var origin: SlideElement?
 
     private static let handles: [(x: CGFloat, y: CGFloat)] = [
         (0, 0), (0.5, 0), (1, 0), (1, 0.5), (1, 1), (0.5, 1), (0, 1), (0, 0.5),
     ]
+
+    private var snapper: Snapper {
+        Snapper(slide: editor.current, excluding: element.id, guides: guides, threshold: Double(8 / scale))
+    }
 
     var body: some View {
         if case .line(let line) = element.content {
@@ -345,38 +447,42 @@ struct SelectionOverlay: View {
         }
     }
 
+    private func begin() {
+        guard origin == nil else { return }
+        origin = element
+        editor.beginInteraction()
+    }
+
+    private func end() {
+        origin = nil
+        editor.snapLines = []
+        editor.endInteraction()
+    }
+
     private func moveEnd(_ end: WritableKeyPath<LineElement, SlidePoint>) -> some Gesture {
         DragGesture(minimumDistance: 1, coordinateSpace: .named("slide"))
             .onChanged { value in
-                if origin == nil {
-                    origin = element
-                    editor.beginInteraction()
-                }
+                begin()
                 guard let origin, case .line(var line) = origin.content else { return }
-                let point = line[keyPath: end]
-                line[keyPath: end] = SlidePoint(
-                    x: point.x + Double(value.translation.width / scale),
-                    y: point.y + Double(value.translation.height / scale)
-                )
+                var point = line[keyPath: end]
+                point.x += Double(value.translation.width / scale)
+                point.y += Double(value.translation.height / scale)
+                editor.snapLines = snapper.snapPoint(&point)
+                line[keyPath: end] = point
                 editor.changeElement(origin.id) { element in
                     element.content = .line(line)
                     element.syncLineFrame()
                 }
             }
-            .onEnded { _ in
-                origin = nil
-                editor.endInteraction()
-            }
+            .onEnded { _ in self.end() }
     }
 
     /// Drags one edge or corner; the opposite one stays put, also when the element is turned.
+    /// Unturned, the moving edges snap.
     private func resize(_ handle: (x: CGFloat, y: CGFloat)) -> some Gesture {
         DragGesture(minimumDistance: 1, coordinateSpace: .named("slide"))
             .onChanged { value in
-                if origin == nil {
-                    origin = element
-                    editor.beginInteraction()
-                }
+                begin()
                 guard let origin else { return }
                 let angle = origin.rotation * .pi / 180
                 // The drag in the element's own (unturned) axes, in slide points.
@@ -391,6 +497,21 @@ struct SelectionOverlay: View {
                 if handle.x == 1 { right = max(right + localX, left + 16) }
                 if handle.y == 0 { top = min(top + localY, bottom - 16) }
                 if handle.y == 1 { bottom = max(bottom + localY, top + 16) }
+                var lines: [SnapLine] = []
+                let unturned = origin.rotation.truncatingRemainder(dividingBy: 360) == 0
+                if unturned {
+                    let center = origin.frame.center
+                    let snapper = snapper
+                    if handle.x != 0.5, let x = snapper.snap([Double(center.x) + (handle.x == 0 ? left : right)], vertical: true) {
+                        if handle.x == 0 { left = min(left + x.shift, right - 16) } else { right = max(right + x.shift, left + 16) }
+                        lines.append(SnapLine(vertical: true, position: x.line))
+                    }
+                    if handle.y != 0.5, let y = snapper.snap([Double(center.y) + (handle.y == 0 ? top : bottom)], vertical: false) {
+                        if handle.y == 0 { top = min(top + y.shift, bottom - 16) } else { bottom = max(bottom + y.shift, top + 16) }
+                        lines.append(SnapLine(vertical: false, position: y.line))
+                    }
+                }
+                editor.snapLines = lines
                 let shiftX = (left + right) / 2
                 let shiftY = (top + bottom) / 2
                 let center = origin.frame.center
@@ -402,20 +523,14 @@ struct SelectionOverlay: View {
                     element.frame = SlideRect(x: newCenterX - newWidth / 2, y: newCenterY - newHeight / 2, width: newWidth, height: newHeight)
                 }
             }
-            .onEnded { _ in
-                origin = nil
-                editor.endInteraction()
-            }
+            .onEnded { _ in end() }
     }
 
-    /// Turns the element toward the finger; it settles on every 45° when close.
+    /// Turns the element toward the finger; it settles on every 15° when close.
     private var rotate: some Gesture {
         DragGesture(minimumDistance: 1, coordinateSpace: .named("slide"))
             .onChanged { value in
-                if origin == nil {
-                    origin = element
-                    editor.beginInteraction()
-                }
+                begin()
                 guard let origin else { return }
                 let center = origin.frame.center
                 let dx = Double(value.location.x / scale) - Double(center.x)
@@ -423,13 +538,10 @@ struct SelectionOverlay: View {
                 var degrees = atan2(dy, dx) * 180 / .pi + 90
                 degrees = degrees.truncatingRemainder(dividingBy: 360)
                 if degrees < 0 { degrees += 360 }
-                let nearest = (degrees / 45).rounded() * 45
-                if abs(degrees - nearest) < 4 { degrees = nearest.truncatingRemainder(dividingBy: 360) }
+                let nearest = (degrees / 15).rounded() * 15
+                if abs(degrees - nearest) < 3 { degrees = nearest.truncatingRemainder(dividingBy: 360) }
                 editor.changeElement(origin.id) { $0.rotation = degrees }
             }
-            .onEnded { _ in
-                origin = nil
-                editor.endInteraction()
-            }
+            .onEnded { _ in end() }
     }
 }

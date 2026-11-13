@@ -23,28 +23,28 @@ struct TitleInputView: View {
     private var trimmed: String { text.trimmingCharacters(in: .whitespacesAndNewlines) }
 
     var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 14) {
-                Text(mode == .create ? "タイトルを入力" : "タイトルを変更")
-                    .font(.system(size: 16, weight: .light))
-                    .foregroundStyle(.secondary)
-                IMETitleField(text: $text, onSubmit: submit)
-                HStack {
-                    Spacer()
-                    Button(action: submit) {
-                        Text(mode == .create ? "作成" : "変更")
-                            .font(.system(size: 17, weight: .bold))
-                            .padding(.horizontal, 10)
-                            .frame(minHeight: 34)
-                    }
-                    .brandGlass(enabled: !trimmed.isEmpty)
-                    .disabled(trimmed.isEmpty)
+        // Centered in what's left above the keyboard.
+        VStack(alignment: .leading, spacing: 14) {
+            Spacer(minLength: 24)
+            Text(mode == .create ? "タイトルを入力" : "タイトルを変更")
+                .font(.system(size: 16, weight: .bold))
+                .foregroundStyle(.secondary)
+            IMETitleField(text: $text, onSubmit: submit)
+            HStack {
+                Spacer()
+                Button(action: submit) {
+                    Text(mode == .create ? "作成" : "変更")
+                        .font(.system(size: 17, weight: .bold))
+                        .padding(.horizontal, 10)
+                        .frame(minHeight: 34)
                 }
+                .brandGlass(enabled: !trimmed.isEmpty)
+                .disabled(trimmed.isEmpty)
             }
-            .padding(.horizontal, 24)
-            .padding(.top, 36)
+            Spacer(minLength: 24)
         }
-        .scrollDismissesKeyboard(.never)
+        .padding(.horizontal, 24)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(Color(uiColor: .systemBackground))
     }
 

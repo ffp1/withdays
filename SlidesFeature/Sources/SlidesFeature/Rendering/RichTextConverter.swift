@@ -15,6 +15,8 @@ enum RichTextConverter {
         var base: UIFont
         if name == "System" || name.isEmpty {
             base = .systemFont(ofSize: size)
+        } else if let weight = FontFaces.systemWeight(name) {
+            base = .systemFont(ofSize: size, weight: weight)
         } else if let font = UIFont(name: name, size: size) {
             base = font
         } else if let face = UIFont.fontNames(forFamilyName: name).first, let font = UIFont(name: face, size: size) {

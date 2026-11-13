@@ -19,30 +19,34 @@ One line per decision: the decision, then why.
 - Thumbnails are PNGs in Caches, keyed by a hash of the slide's JSON: an unchanged slide is never drawn twice and a changed one gets a new file.
 - File size in 詳細 = the bytes of the deck's slide JSON + its asset folder.
 - Line elements store their two ends; their frame is kept as the box around them.
-- A deck's title slide keeps the placeholder text 「タイトルを入力」; the typed deck title is not copied into it (the spec doesn't say to).
+- Layout placeholders (「タイトルを入力」…) are empty text boxes with a placeholder shown in gray in the editor only; the player, thumbnails, PDF and PowerPoint leave them out. The typed deck title is not copied into the title slide.
 
 ## Look
 
 - Brand colors are asset colors: SlidesBrand #02B9B9 (fills), SlidesOnBrand #00302F (text on brand fills), SlidesBrandText #007A7A light / #02B9B9 dark (brand-colored text) — §14-3.
-- The title input is a sheet at the large detent (not a full-screen cover), so it can be swiped down: the spec has no close control — §14-5.
+- The title input is a sheet at the large detent (not a full-screen cover), so it can be swiped down: the spec has no close control — §14-5. Its content sits in the middle of what's above the keyboard; both labels are bold.
 - The home search field and controls float over the grid (glass) and slide away while scrolling down; the smallest scroll up brings them back.
-- Favorites filter is a segmented control (すべて / お気に入り) beside the sort button; no badge on cards — §14-11.
+- Favorites filter is a segmented control (すべて / お気に入り) beside the sort button; favorites get a star at their thumbnail's top left (requested, replacing §14-11).
+- The card's ⋯ is a plain button (no glass) beside the title, centered with it; holding the card shows the same menu.
 - Search results show "タイトルに一致" / "スライドNの本文に一致" / "スライドNの画像内テキストに一致" under each card — §14-4.
 
 ## Editor
 
-- The editor's top controls are native toolbar items (back; undo / redo; ＋ / ▶ / ⋯ separated by `ToolbarSpacer`), so iOS 26 draws them as glass pills.
+- The editor's top controls are drawn by the editor itself as glass pills (back; undo / redo; ＋ / ▶ / ⋯), not navigation-bar items: the bar's items sometimes went missing.
+- ▶ plays from the first slide; holding it plays from the slide on screen.
 - A tap selects an element; tapping the selected text box (so also a double tap) starts typing; a selected table types in the tapped cell.
-- A drag that starts on an element moves it; a sideways swipe that starts on empty slide or outside the slide changes slide — §14-8.
+- A drag that starts on an element moves it; a sideways swipe that starts on empty slide or outside the slide changes slide, to the right for the next one (requested) — §14-8.
+- Pinching with nothing selected zooms the view (up to 500 %); zoomed in, a drag on empty space moves it; the % button goes back to the whole slide.
 - With an element selected the glass bar shows its tools and その他 (複製, stacking order, 削除); with nothing selected it shows 背景 and トランジション — §9 / §14-9.
 - 配置 for a text box is a menu of horizontal and vertical alignment; 色 is a short sheet with swatches and a picker.
 - A new text box holds 「テキスト」, selected, so typing replaces it.
 - Shapes insert at 520×360 (rect), 400×400 (circle, triangle, star), 520×300 (arrow); lines at 500 pt; tables 280×110 per cell up to 1600×860.
-- Images: 写真 or ファイル is asked first (a dialog), then the picker; images are placed fitted inside 1280×720.
+- Images: 画像 opens a list (写真ライブラリ / ファイル), then the picker; images are placed fitted inside 1280×720.
+- The editor draws images at up to 1600 px and only redraws an element when its look changes (not when it moves); exports use the full image.
 - Text formatting goes to the selected range while typing, to what's typed next when nothing is selected, and to the whole box when the box (not text) is selected.
 - Table row heights and column widths are weights edited with sliders in 行/列 (with 均等にする); there's no dragging of borders.
 - Table cell fills can go to all cells, the first row, or the cell being typed in.
-- Guides are visual only, no snapping — §14-10. The turning handle settles on multiples of 45° within 4°.
+- Snapping (requested): moving, resizing (unturned elements) and line ends snap to the slide's edges and middle, the guides when shown (25 / 50 / 75 %), and other elements' edges and middles, within 8 screen points; a pink line shows what it met. Turning settles on every 15° within 3°.
 - The ＋ in the strip and new slides from it go after the current slide — §14-6.
 - Slide reordering uses system drag and drop (lift after a hold, brand insertion bar, the scroll view scrolls near its edges).
 - Copy / paste of slides is in memory, in the app only; pasting into another deck copies the images over.
@@ -54,7 +58,8 @@ One line per decision: the decision, then why.
 
 ## Player
 
-- Tap in the middle third toggles the controls; right third → next (animation step first), left third → previous; controls hide after 3 s — §14-7.
+- Tap in the middle third toggles the controls; right third → next (animation step first), left third → previous; controls hide after 3 s — §14-7. Controls are small and stay inside the safe area.
+- The player opens on black without a slide-up, turns the screen, then fades the slide in (and fades out before turning back), so the turn isn't seen.
 - A swipe changes slide with every element in its final state; a tap runs the next step — §9.
 - Animations before the first タップ時 run as the slide appears.
 - Reduce Motion turns transitions into fades and drops movement from element animations.
@@ -73,3 +78,7 @@ One line per decision: the decision, then why.
 - OCR runs on images when they're added and fills in older ones in the background at launch; its text is stored per image ("<deck>/<file>") and only read at query time.
 - Normalization: case, width (full / half) and hiragana / katakana folded; kanji readings aren't matched.
 - Name sorting uses Japanese-locale comparison; kanji sort by code point (the system gives no readings).
+
+## Fonts
+
+- The font picker lists families; a family with several weights (ヒラギノ角ゴシック W0–W9, SF Pro…) opens a list of them. The system font's weights are stored as "System-<weight>".

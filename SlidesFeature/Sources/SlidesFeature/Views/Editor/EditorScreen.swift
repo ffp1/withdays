@@ -44,6 +44,8 @@ struct EditorView: View {
     @State private var sheet: EditorSheet?
     @State private var renaming = false
     @State private var playing = false
+    /// The slide the player starts on.
+    @State private var playStart = 0
     @State private var export: ExportRequest?
     @State private var showPhotos = false
     @State private var photo: PhotosPickerItem?
@@ -53,6 +55,7 @@ struct EditorView: View {
 
     var body: some View {
         VStack(spacing: 0) {
+            topBar
             SlideCanvasView(editor: editor, textController: textController, showsGuides: editor.deck.showsGuides, selectAllOnEdit: $selectAllOnEdit)
                 .background(Color(uiColor: .systemGroupedBackground))
             if editor.editing != nil {
@@ -71,9 +74,9 @@ struct EditorView: View {
             }
         }
         .animation(.snappy(duration: 0.25), value: editor.editing != nil)
-        .navigationBarBackButtonHidden()
-        .toolbar { toolbar }
-        .navigationBarTitleDisplayMode(.inline)
+        .background(Color(uiColor: .systemGroupedBackground))
+        // The controls are drawn here (always there), not in the navigation bar.
+        .toolbar(.hidden, for: .navigationBar)
         .sheet(item: $sheet) { sheet in
             sheetContent(sheet)
         }
@@ -84,9 +87,12 @@ struct EditorView: View {
             .presentationDetents([.large])
         }
         .fullScreenCover(isPresented: $playing) {
-            PlayerView(slides: editor.slides, deck: editor.deckID, start: editor.currentIndex) { index in
+            PlayerView(slides: editor.slides, deck: editor.deckID, start: playStart) { index in
                 editor.currentIndex = index
-                playing = false
+                // The player has already faded to black and turned back; it goes without a slide.
+                var transaction = Transaction(animation: nil)
+                transaction.disablesAnimations = true
+                withTransaction(transaction) { playing = false }
             }
         }
         .photosPicker(isPresented: $showPhotos, selection: $photo, matching: .images)
@@ -129,76 +135,115 @@ struct EditorView: View {
         .sensoryFeedback(.selection, trigger: editor.selection)
     }
 
-    // MARK: Toolbar
+    // MARK: Top bar
 
-    @ToolbarContentBuilder
-    private var toolbar: some ToolbarContent {
-        ToolbarItem(placement: .topBarLeading) {
-            Button {
+    /// Back at the left; at the right, 取り消し / やり直し and ＋ / ▶ / ⋯ as two glass pills.
+    private var topBar: some View {
+        HStack(spacing: 10) {
+            barButton("chevron.left", label: "戻る") {
                 finishTyping()
                 editor.saveNow()
                 if !path.isEmpty { path.removeLast() }
-            } label: {
-                Image(systemName: "chevron.left")
             }
-            .accessibilityLabel("戻る")
+            .glassEffect(.regular.interactive(), in: .circle)
+            Spacer()
+            GlassEffectContainer(spacing: 10) {
+                HStack(spacing: 10) {
+                    HStack(spacing: 0) {
+                        barButton("arrow.uturn.backward", label: "取り消し") {
+                            finishTyping()
+                            editor.undo()
+                        }
+                        .disabled(!editor.canUndo)
+                        .opacity(editor.canUndo ? 1 : 0.35)
+                        barButton("arrow.uturn.forward", label: "やり直し") {
+                            finishTyping()
+                            editor.redo()
+                        }
+                        .disabled(!editor.canRedo)
+                        .opacity(editor.canRedo ? 1 : 0.35)
+                    }
+                    .glassEffect(.regular.interactive(), in: .capsule)
+                    HStack(spacing: 0) {
+                        barButton("plus", label: "挿入") {
+                            finishTyping()
+                            sheet = .insert
+                        }
+                        playButton
+                        moreMenu
+                    }
+                    .glassEffect(.regular.interactive(), in: .capsule)
+                }
+            }
         }
-        ToolbarItemGroup(placement: .topBarTrailing) {
-            Button {
-                finishTyping()
-                editor.undo()
-            } label: {
-                Image(systemName: "arrow.uturn.backward")
-            }
-            .disabled(!editor.canUndo)
-            .accessibilityLabel("取り消し")
-            Button {
-                finishTyping()
-                editor.redo()
-            } label: {
-                Image(systemName: "arrow.uturn.forward")
-            }
-            .disabled(!editor.canRedo)
-            .accessibilityLabel("やり直し")
+        .padding(.horizontal, 16)
+        .padding(.top, 4)
+        .padding(.bottom, 6)
+    }
+
+    private func barButton(_ icon: String, label: String, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Image(systemName: icon)
+                .font(.system(size: 17, weight: .semibold))
+                .frame(width: 44, height: 44)
+                .contentShape(Rectangle())
         }
-        ToolbarSpacer(.fixed, placement: .topBarTrailing)
-        ToolbarItemGroup(placement: .topBarTrailing) {
-            Button {
-                finishTyping()
-                sheet = .insert
-            } label: {
-                Image(systemName: "plus")
-            }
-            .accessibilityLabel("挿入")
-            Button {
-                finishTyping()
-                editor.saveNow()
-                playing = true
-            } label: {
-                Image(systemName: "play.fill")
-            }
+        .buttonStyle(.plain)
+        .foregroundStyle(.primary)
+        .accessibilityLabel(label)
+    }
+
+    /// A tap plays from the first slide; holding plays from the one on screen.
+    private var playButton: some View {
+        Image(systemName: "play.fill")
+            .font(.system(size: 17, weight: .semibold))
+            .foregroundStyle(.primary)
+            .frame(width: 44, height: 44)
+            .contentShape(Rectangle())
+            .onTapGesture { play(from: 0) }
+            .onLongPressGesture(minimumDuration: 0.45) { play(from: editor.currentIndex) }
+            .accessibilityElement()
             .accessibilityLabel("再生")
-            Menu {
-                Button("名前を変更", systemImage: "pencil") { renaming = true }
-                Button(editor.deck.showsGuides ? "ガイドを非表示" : "ガイドを表示", systemImage: "squareshape.split.2x2.dotted") {
-                    editor.toggleGuides()
-                }
-                Button("詳細", systemImage: "info.circle") {
-                    editor.saveNow()
-                    sheet = .details
-                }
-                Menu("書き出し", systemImage: "square.and.arrow.up") {
-                    Button("PDF (.pdf)") { startExport(.pdf) }
-                    Button("PowerPoint (.pptx)") { startExport(.pptx) }
-                }
-                Button(editor.deck.isFavorite ? "お気に入りから削除" : "お気に入りに追加", systemImage: editor.deck.isFavorite ? "star.slash" : "star") {
-                    editor.toggleFavorite()
-                }
-            } label: {
-                Image(systemName: "ellipsis")
+            .accessibilityAddTraits(.isButton)
+            .accessibilityAction { play(from: 0) }
+            .accessibilityAction(named: "現在のスライドから再生") { play(from: editor.currentIndex) }
+    }
+
+    private var moreMenu: some View {
+        Menu {
+            Button("名前を変更", systemImage: "pencil") { renaming = true }
+            Button(editor.deck.showsGuides ? "ガイドを非表示" : "ガイドを表示", systemImage: "squareshape.split.2x2.dotted") {
+                editor.toggleGuides()
             }
-            .accessibilityLabel("その他")
+            Button("詳細", systemImage: "info.circle") {
+                editor.saveNow()
+                sheet = .details
+            }
+            Menu("書き出し", systemImage: "square.and.arrow.up") {
+                Button("PDF (.pdf)") { startExport(.pdf) }
+                Button("PowerPoint (.pptx)") { startExport(.pptx) }
+            }
+            Button(editor.deck.isFavorite ? "お気に入りから削除" : "お気に入りに追加", systemImage: editor.deck.isFavorite ? "star.slash" : "star") {
+                editor.toggleFavorite()
+            }
+        } label: {
+            Image(systemName: "ellipsis")
+                .font(.system(size: 17, weight: .semibold))
+                .foregroundStyle(.primary)
+                .frame(width: 44, height: 44)
+                .contentShape(Rectangle())
         }
+        .accessibilityLabel("その他")
+    }
+
+    /// Opens the player without a slide-up: it turns the screen itself, behind black.
+    private func play(from index: Int) {
+        finishTyping()
+        editor.saveNow()
+        playStart = index
+        var transaction = Transaction(animation: nil)
+        transaction.disablesAnimations = true
+        withTransaction(transaction) { playing = true }
     }
 
     // MARK: Sheets

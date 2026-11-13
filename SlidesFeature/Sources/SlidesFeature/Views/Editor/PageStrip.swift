@@ -109,8 +109,8 @@ struct PageStrip: View {
             Image(systemName: "plus")
                 .font(.system(size: 22, weight: .semibold))
                 .foregroundStyle(SlidesTheme.onBrand)
-                .frame(width: 56, height: 56)
-                .glassEffect(.regular.tint(SlidesTheme.brand).interactive(), in: .circle)
+                .frame(width: 48, height: 48)
+                .background(Circle().fill(SlidesTheme.brand))
         }
         .accessibilityLabel("スライドを追加")
         .padding(.leading, 4)

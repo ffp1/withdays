@@ -17,25 +17,43 @@ struct ElementRenderView: UIViewRepresentable {
         return view
     }
 
+    /// Shows empty text boxes' placeholders (the editor; the player leaves them out).
+    var placeholders = false
+
     func updateUIView(_ view: ElementDrawingView, context: Context) {
-        guard view.element != element || view.deck != deck || view.scale != scale else { return }
+        // Moving only changes where SwiftUI puts the view: the drawing stays as it is.
+        let look = ElementDrawingView.Look(
+            content: element.content, width: element.frame.width, height: element.frame.height,
+            line: element.kind == .line ? element.frame.cg.origin : .zero, scale: scale, placeholders: placeholders
+        )
         view.element = element
         view.deck = deck
-        view.scale = scale
+        guard view.look != look else { return }
+        view.look = look
         view.setNeedsDisplay()
     }
 }
 
 final class ElementDrawingView: UIView {
+    struct Look: Equatable {
+        let content: ElementContent
+        let width: Double
+        let height: Double
+        /// A line's ends are absolute, so its drawing depends on where its box is.
+        let line: CGPoint
+        let scale: CGFloat
+        let placeholders: Bool
+    }
+
     var element: SlideElement?
     var deck = UUID()
-    var scale: CGFloat = 1
+    var look: Look?
 
     override func draw(_ rect: CGRect) {
-        guard let element, let context = UIGraphicsGetCurrentContext() else { return }
-        context.scaleBy(x: scale, y: scale)
+        guard let element, let look, let context = UIGraphicsGetCurrentContext() else { return }
+        context.scaleBy(x: look.scale, y: look.scale)
         context.translateBy(x: SlideRenderer.padding, y: SlideRenderer.padding)
-        SlideRenderer.drawContent(element, deck: deck, in: context)
+        SlideRenderer.drawContent(element, deck: deck, in: context, preview: true, placeholders: look.placeholders)
     }
 }
 
@@ -69,7 +87,7 @@ final class BackgroundDrawingView: UIView {
         let factor = bounds.width / SlideContent.size.width
         context.scaleBy(x: factor, y: factor)
         UIGraphicsPushContext(context)
-        SlideRenderer.drawBackground(background, deck: deck, in: context, rect: CGRect(origin: .zero, size: SlideContent.size))
+        SlideRenderer.drawBackground(background, deck: deck, in: context, rect: CGRect(origin: .zero, size: SlideContent.size), preview: true)
         UIGraphicsPopContext()
     }
 }

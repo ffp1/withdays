@@ -53,8 +53,10 @@ struct ElementLook: Equatable {
 }
 
 /// 再生: full screen in landscape, one slide at a time on black.
-/// Tap the right half (or swipe left) for next, the left half (or swipe right) for previous; a tap runs the next
+/// Tap the right part (or swipe left) for next, the left part (or swipe right) for previous; a tap runs the next
 /// animation step first. Tap the middle for the controls. Hold to edit this slide; swipe down to go back.
+/// It opens on black, turns the screen, then fades the slide in (and the other way round when leaving),
+/// so the turn happens out of sight.
 struct PlayerView: View {
     let slides: [SlideContent]
     let deck: UUID
@@ -65,6 +67,10 @@ struct PlayerView: View {
     @State private var step = 0
     @State private var looks: [UUID: ElementLook] = [:]
     @State private var forward = true
+    /// The transition of the slide being shown next; set before the change, so the leaving slide uses it too.
+    @State private var transitionKind = TransitionKind.none
+    @State private var shown = false
+    @State private var leaving = false
     @State private var showsControls = false
     @State private var hideControls: Task<Void, Never>?
     @State private var dragDown: CGFloat = 0
@@ -81,20 +87,45 @@ struct PlayerView: View {
     private var slide: SlideContent? { slides.indices.contains(index) ? slides[index] : nil }
 
     var body: some View {
+        ZStack {
+            Color.black.ignoresSafeArea()
+            stage
+                .ignoresSafeArea()
+                .opacity(shown ? 1 : 0)
+            if showsControls, shown {
+                controls
+                    .transition(.opacity)
+            }
+        }
+        .statusBarHidden()
+        .persistentSystemOverlays(.hidden)
+        .onAppear {
+            enter(animated: false, runAuto: false)
+            SlidesOrientation.lock(.landscape, turnTo: .landscapeRight)
+            // After the turn, behind black.
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+                withAnimation(.easeOut(duration: 0.3)) { shown = true }
+                enter(animated: true)
+            }
+        }
+        .sensoryFeedback(.selection, trigger: index)
+    }
+
+    private var stage: some View {
         GeometryReader { geo in
             let scale = min(geo.size.width / 1920, geo.size.height / 1080)
             ZStack {
-                Color.black.ignoresSafeArea()
                 if let slide {
                     PlayedSlide(slide: slide, deck: deck, scale: scale, looks: looks)
                         .frame(width: 1920 * scale, height: 1080 * scale)
                         .id(slide.id)
-                        .transition(transition(for: slide.transition.kind))
+                        .transition(transition(for: transitionKind))
                         .scaleEffect(1 - min(dragDown, 600) / 1400)
                         .offset(y: dragDown)
                 }
             }
             .frame(width: geo.size.width, height: geo.size.height)
+            .clipped()
             .contentShape(Rectangle())
             .onTapGesture(coordinateSpace: .local) { location in
                 tapped(at: location.x / max(geo.size.width, 1))
@@ -103,71 +134,54 @@ struct PlayerView: View {
                 exit()
             }
             .simultaneousGesture(drag)
-            .overlay { if showsControls { controls } }
         }
-        .ignoresSafeArea()
-        .statusBarHidden()
-        .persistentSystemOverlays(.hidden)
-        .onAppear {
-            SlidesOrientation.lock(.landscape, turnTo: .landscapeRight)
-            enter(animated: false)
-        }
-        .onDisappear {
-            SlidesOrientation.lock(.portrait, turnTo: .portrait)
-        }
-        .sensoryFeedback(.selection, trigger: index)
     }
 
     // MARK: Controls
 
+    /// Inside the safe area (clear of the notch / Dynamic Island), small and translucent.
     private var controls: some View {
         ZStack {
             VStack {
                 HStack {
-                    Button { exit() } label: {
-                        Image(systemName: "xmark")
-                            .font(.system(size: 17, weight: .semibold))
-                            .frame(width: 44, height: 44)
-                    }
-                    .buttonStyle(.glass)
-                    .buttonBorderShape(.circle)
-                    .accessibilityLabel("閉じる")
+                    controlButton("xmark", label: "閉じる") { exit() }
                     Spacer()
                 }
                 Spacer()
                 Text("\(index + 1)/\(slides.count)")
-                    .font(.system(size: 14, weight: .semibold))
+                    .font(.system(size: 12, weight: .semibold))
                     .monospacedDigit()
                     .foregroundStyle(.white)
-                    .padding(.horizontal, 14)
-                    .frame(height: 32)
+                    .padding(.horizontal, 10)
+                    .frame(height: 26)
                     .glassEffect(.regular, in: .capsule)
             }
             HStack {
-                Button { go(-1, animated: true) } label: {
-                    Image(systemName: "chevron.left")
-                        .font(.system(size: 20, weight: .semibold))
-                        .frame(width: 48, height: 48)
-                }
-                .buttonStyle(.glass)
-                .buttonBorderShape(.circle)
-                .disabled(index == 0)
-                .accessibilityLabel("前へ")
+                controlButton("chevron.left", label: "前へ") { go(-1, animated: true) }
+                    .disabled(index == 0)
+                    .opacity(index == 0 ? 0.4 : 1)
                 Spacer()
-                Button { go(1, animated: true) } label: {
-                    Image(systemName: "chevron.right")
-                        .font(.system(size: 20, weight: .semibold))
-                        .frame(width: 48, height: 48)
-                }
-                .buttonStyle(.glass)
-                .buttonBorderShape(.circle)
-                .disabled(index >= slides.count - 1)
-                .accessibilityLabel("次へ")
+                controlButton("chevron.right", label: "次へ") { go(1, animated: true) }
+                    .disabled(index >= slides.count - 1)
+                    .opacity(index >= slides.count - 1 ? 0.4 : 1)
             }
         }
-        .padding(24)
+        .padding(12)
         .environment(\.colorScheme, .dark)
-        .transition(.opacity)
+    }
+
+    private func controlButton(_ icon: String, label: String, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Image(systemName: icon)
+                .font(.system(size: 14, weight: .semibold))
+                .foregroundStyle(.white)
+                .frame(width: 36, height: 36)
+                .glassEffect(.regular.interactive(), in: .circle)
+                .frame(width: 44, height: 44)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(label)
     }
 
     private func toggleControls() {
@@ -185,6 +199,7 @@ struct PlayerView: View {
 
     /// `fraction` is how far across the screen the tap was.
     private func tapped(at fraction: CGFloat) {
+        guard shown else { return }
         if fraction > 0.38, fraction < 0.62 {
             toggleControls()
         } else if fraction >= 0.62 {
@@ -216,8 +231,21 @@ struct PlayerView: View {
             }
     }
 
+    /// Fades to black, turns back to portrait out of sight, then leaves.
     private func exit() {
-        onExit(index)
+        guard !leaving else { return }
+        leaving = true
+        let current = index
+        withAnimation(.easeIn(duration: 0.2)) {
+            shown = false
+            showsControls = false
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.22) {
+            SlidesOrientation.lock(.portrait, turnTo: .portrait)
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.45) {
+                onExit(current)
+            }
+        }
     }
 
     // MARK: Playing
@@ -236,21 +264,27 @@ struct PlayerView: View {
 
     private func go(_ delta: Int, animated: Bool) {
         let target = index + delta
-        guard slides.indices.contains(target) else { return }
-        forward = delta > 0
+        guard slides.indices.contains(target), !leaving else { return }
         let kind = slides[target].transition.kind
         let duration = slides[target].transition.duration
-        if kind == .none {
-            index = target
-        } else {
-            withAnimation(.easeInOut(duration: duration)) { index = target }
+        forward = delta > 0
+        // The leaving slide takes its transition from what's drawn now, so set it before the change.
+        transitionKind = kind
+        DispatchQueue.main.async {
+            if kind == .none {
+                var transaction = Transaction(animation: nil)
+                transaction.disablesAnimations = true
+                withTransaction(transaction) { index = target }
+            } else {
+                withAnimation(.easeInOut(duration: duration)) { index = target }
+            }
+            enter(animated: animated)
         }
-        enter(animated: animated)
     }
 
     /// Sets up the slide's elements: with animations, as they start (then runs the automatic step);
     /// without, as they end.
-    private func enter(animated: Bool) {
+    private func enter(animated: Bool, runAuto: Bool = true) {
         generation += 1
         step = 0
         guard let slide else { return }
@@ -264,7 +298,7 @@ struct PlayerView: View {
         }
         if animated {
             looks = start
-            run(plan.auto)
+            if runAuto { run(plan.auto) }
         } else {
             looks = end
             step = plan.taps.count
@@ -296,7 +330,8 @@ struct PlayerView: View {
         case .pushRight:
             return .asymmetric(insertion: .move(edge: forward ? .leading : .trailing), removal: .move(edge: forward ? .trailing : .leading))
         case .cover:
-            return .asymmetric(insertion: .move(edge: forward ? .trailing : .leading), removal: .identity)
+            // The new slide slides over the old one, which stays until covered.
+            return .asymmetric(insertion: .move(edge: forward ? .trailing : .leading), removal: .opacity.animation(.linear(duration: 0.01).delay(0.6)))
         case .zoom:
             return .asymmetric(insertion: .scale(scale: 0.3).combined(with: .opacity), removal: .opacity)
         }

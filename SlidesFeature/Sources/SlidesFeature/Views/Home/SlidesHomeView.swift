@@ -325,7 +325,8 @@ struct SlidesRoot: View {
     }
 }
 
-/// A deck in the grid: its first slide, its title and a ⋯ menu.
+/// A deck in the grid: its first slide (a star at its corner for favorites), its title and a ⋯ menu.
+/// Holding the card shows the same menu.
 struct DeckCard: View {
     let deck: Deck
     let caption: String?
@@ -339,7 +340,7 @@ struct DeckCard: View {
     var delete: () -> Void
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: 6) {
             Button(action: open) {
                 Group {
                     if let first = deck.sortedPages.first {
@@ -348,12 +349,25 @@ struct DeckCard: View {
                         RoundedRectangle(cornerRadius: 12).fill(Color.white).aspectRatio(16 / 9, contentMode: .fit)
                     }
                 }
+                .overlay(alignment: .topLeading) {
+                    if deck.isFavorite {
+                        Image(systemName: "star.fill")
+                            .font(.system(size: 12, weight: .bold))
+                            .foregroundStyle(Color(red: 0.97, green: 0.75, blue: 0.1))
+                            .padding(5)
+                            .background(Circle().fill(Color.white.opacity(0.9)))
+                            .shadow(color: .black.opacity(0.15), radius: 2, y: 1)
+                            .padding(6)
+                            .accessibilityLabel("お気に入り")
+                    }
+                }
                 .shadow(color: .black.opacity(0.08), radius: 6, y: 3)
             }
             .buttonStyle(.plain)
+            .contextMenu { menuItems }
             .accessibilityLabel(deck.title)
-            HStack(alignment: .top, spacing: 6) {
-                VStack(alignment: .leading, spacing: 3) {
+            HStack(alignment: .center, spacing: 4) {
+                VStack(alignment: .leading, spacing: 2) {
                     Text(deck.title)
                         .font(.system(size: 14, weight: .semibold))
                         .lineLimit(2)
@@ -369,27 +383,28 @@ struct DeckCard: View {
                 .contentShape(Rectangle())
                 .onTapGesture(perform: open)
                 Menu {
-                    Button("名前を変更", systemImage: "pencil", action: rename)
-                    Button("複製", systemImage: "plus.square.on.square", action: duplicate)
-                    Button("PowerPoint(.pptx) で書き出し", systemImage: "doc.richtext", action: exportPPTX)
-                    Button("PDF(.pdf) で書き出し", systemImage: "doc", action: exportPDF)
-                    Button(deck.isFavorite ? "お気に入りから削除" : "お気に入りに追加", systemImage: deck.isFavorite ? "star.slash" : "star", action: toggleFavorite)
-                    Button("詳細", systemImage: "info.circle", action: showDetails)
-                    Divider()
-                    Button("削除", systemImage: "trash", role: .destructive, action: delete)
+                    menuItems
                 } label: {
                     Image(systemName: "ellipsis")
-                        .font(.system(size: 14, weight: .bold))
-                        .foregroundStyle(.primary)
-                        .frame(width: 32, height: 32)
-                        .glassEffect(.regular.interactive(), in: .circle)
-                        .frame(width: 44, height: 44)
+                        .font(.system(size: 15, weight: .bold))
+                        .foregroundStyle(.secondary)
+                        .frame(width: 36, height: 44)
                         .contentShape(Rectangle())
                 }
                 .accessibilityLabel("その他")
-                .padding(.top, -6)
-                .padding(.trailing, -6)
             }
         }
+    }
+
+    @ViewBuilder
+    private var menuItems: some View {
+        Button("名前を変更", systemImage: "pencil", action: rename)
+        Button("複製", systemImage: "plus.square.on.square", action: duplicate)
+        Button("PowerPoint(.pptx) で書き出し", systemImage: "doc.richtext", action: exportPPTX)
+        Button("PDF(.pdf) で書き出し", systemImage: "doc", action: exportPDF)
+        Button(deck.isFavorite ? "お気に入りから削除" : "お気に入りに追加", systemImage: deck.isFavorite ? "star.slash" : "star", action: toggleFavorite)
+        Button("詳細", systemImage: "info.circle", action: showDetails)
+        Divider()
+        Button("削除", systemImage: "trash", role: .destructive, action: delete)
     }
 }

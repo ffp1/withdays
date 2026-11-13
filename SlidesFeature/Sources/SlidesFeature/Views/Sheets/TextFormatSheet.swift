@@ -116,7 +116,7 @@ struct FontPickerView: View {
     @State private var library = FontLibrary.shared
     @State private var importing = false
     @State private var errorMessage: String?
-    @State private var deleting: FontLibrary.ImportedFont?
+    @State private var deletingFamily: [FontLibrary.ImportedFont]?
 
     var body: some View {
         let current = formatter.run.font
@@ -135,17 +135,20 @@ struct FontPickerView: View {
             }
             if !library.imported.isEmpty {
                 Section("読み込んだフォント") {
-                    ForEach(library.imported) { font in
-                        row(font.postScriptName, font.displayName, tag: font.ext.uppercased(), current: current)
-                            .swipeActions(edge: .trailing) {
-                                Button("削除", role: .destructive) { askToDelete(font) }
-                            }
+                    ForEach(library.importedFamilies, id: \.family) { group in
+                        familyRow(
+                            group.family, label: group.faces.first?.displayName ?? group.family,
+                            faces: group.faces.map(\.postScriptName), tag: group.faces.first?.ext.uppercased(), current: current
+                        )
+                        .swipeActions(edge: .trailing) {
+                            Button("削除", role: .destructive) { askToDelete(group.faces) }
+                        }
                     }
                 }
             }
             Section("システムフォント") {
-                ForEach(FontLibrary.systemFonts, id: \.name) { font in
-                    row(font.name, font.label, tag: nil, current: current)
+                ForEach(FontLibrary.systemFamilies, id: \.family) { family in
+                    familyRow(family.family, label: family.label, faces: FontFaces.faces(of: family.family), tag: nil, current: current)
                 }
             }
         }
@@ -165,12 +168,12 @@ struct FontPickerView: View {
             Text(errorMessage ?? "")
         }
         .alert(
-            "「\(deleting?.displayName ?? "")」を削除",
-            isPresented: Binding(get: { deleting != nil }, set: { if !$0 { deleting = nil } }),
-            presenting: deleting
-        ) { font in
+            "「\(deletingFamily?.first?.displayName ?? "")」を削除",
+            isPresented: Binding(get: { deletingFamily != nil }, set: { if !$0 { deletingFamily = nil } }),
+            presenting: deletingFamily
+        ) { faces in
             Button("キャンセル", role: .cancel) {}
-            Button("削除", role: .destructive) { library.delete(font) }
+            Button("削除", role: .destructive) { faces.forEach(library.delete) }
         } message: { _ in
             Text("このフォントを使っているスライドがあります。削除すると標準のフォントで表示されます（もう一度読み込むと元に戻ります）。")
         }
@@ -179,6 +182,45 @@ struct FontPickerView: View {
     private static let fontTypes: [UTType] = [
         UTType("public.truetype-ttf-font"), UTType("public.opentype-font"), UTType(filenameExtension: "ttf"), UTType(filenameExtension: "otf"),
     ].compactMap { $0 }
+
+    /// A family with one face is picked here; one with several (weights) opens them.
+    @ViewBuilder
+    private func familyRow(_ family: String, label: String, faces: [String], tag: String?, current: String) -> some View {
+        let regular = faces.first { FontFaces.faceLabel($0).contains("W3") || FontFaces.faceLabel($0) == "Regular" } ?? faces.first ?? family
+        let chosen = FontFaces.family(of: current) == family
+        if faces.count > 1 {
+            NavigationLink {
+                List(faces, id: \.self) { face in
+                    row(face, FontFaces.faceLabel(face), tag: nil, current: current)
+                }
+                .navigationTitle(label)
+                .navigationBarTitleDisplayMode(.inline)
+            } label: {
+                HStack {
+                    Text(label)
+                        .font(Font(RichTextConverter.font(name: regular, size: 18, bold: false, italic: false) as CTFont))
+                    if let tag { tagView(tag) }
+                    Spacer()
+                    if chosen {
+                        Text(FontFaces.faceLabel(current))
+                            .font(.system(size: 13))
+                            .foregroundStyle(SlidesTheme.brandText)
+                    }
+                }
+            }
+        } else {
+            row(faces.first ?? family, label, tag: tag, current: current)
+        }
+    }
+
+    private func tagView(_ tag: String) -> some View {
+        Text(tag)
+            .font(.system(size: 10, weight: .bold))
+            .foregroundStyle(.secondary)
+            .padding(.horizontal, 6)
+            .padding(.vertical, 2)
+            .background(Capsule().fill(Color.primary.opacity(0.08)))
+    }
 
     private func row(_ name: String, _ label: String, tag: String?, current: String) -> some View {
         Button {
@@ -208,19 +250,20 @@ struct FontPickerView: View {
         .buttonStyle(.plain)
     }
 
-    /// Deletes at once when no slide uses the font; otherwise asks first.
-    private func askToDelete(_ font: FontLibrary.ImportedFont) {
-        var used = formatter.editor.slides.contains { $0.fontNames.contains(font.postScriptName) }
+    /// Deletes at once when no slide uses the family's fonts; otherwise asks first.
+    private func askToDelete(_ faces: [FontLibrary.ImportedFont]) {
+        let names = Set(faces.map(\.postScriptName))
+        var used = formatter.editor.slides.contains { !$0.fontNames.isDisjoint(with: names) }
         if !used {
             let pages = (try? context.fetch(FetchDescriptor<SlidePage>())) ?? []
             used = pages.contains { page in
-                SlideContent.decode(page.data)?.fontNames.contains(font.postScriptName) ?? false
+                !(SlideContent.decode(page.data)?.fontNames.isDisjoint(with: names) ?? true)
             }
         }
         if used {
-            deleting = font
+            deletingFamily = faces
         } else {
-            library.delete(font)
+            faces.forEach(library.delete)
         }
     }
 }

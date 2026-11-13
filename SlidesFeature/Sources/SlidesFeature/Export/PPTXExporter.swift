@@ -588,13 +588,13 @@ struct SlideWriter {
         if run.strike { attributes += " strike=\"sngStrike\"" }
         if text.charSpacing != 0 { attributes += " spc=\"\(Int((text.charSpacing * 50).rounded()))\"" }
         let face = X.escape(Self.typeface(run.font))
-        let eastAsian = run.font == "System" ? "Hiragino Sans" : face
+        let eastAsian = run.font.hasPrefix("System") ? "Hiragino Sans" : face
         return "<\(tag)\(attributes) dirty=\"0\">\(solid(run.color, opacity: opacity))<a:latin typeface=\"\(face)\"/><a:ea typeface=\"\(eastAsian)\"/><a:cs typeface=\"\(face)\"/></\(tag)>"
     }
 
     /// A family name PowerPoint can look for.
     static func typeface(_ font: String) -> String {
-        if font == "System" || font.isEmpty { return "Helvetica Neue" }
+        if font.hasPrefix("System") || font.isEmpty { return "Helvetica Neue" }
         return UIFont(name: font, size: 12)?.familyName ?? font
     }
 

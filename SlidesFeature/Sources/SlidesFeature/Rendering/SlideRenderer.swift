@@ -9,16 +9,17 @@ enum SlideRenderer {
     /// Room around an element's frame for its stroke, arrowheads and shadow.
     static let padding: CGFloat = 60
 
-    static func draw(_ slide: SlideContent, deck: UUID, in context: CGContext) {
+    /// `preview` draws images at screen size (thumbnails, the editor); exports leave it off for full resolution.
+    static func draw(_ slide: SlideContent, deck: UUID, in context: CGContext, preview: Bool = false) {
         UIGraphicsPushContext(context)
         defer { UIGraphicsPopContext() }
-        drawBackground(slide.background, deck: deck, in: context, rect: CGRect(origin: .zero, size: size))
+        drawBackground(slide.background, deck: deck, in: context, rect: CGRect(origin: .zero, size: size), preview: preview)
         for element in slide.elements {
-            draw(element, deck: deck, in: context)
+            draw(element, deck: deck, in: context, preview: preview)
         }
     }
 
-    static func drawBackground(_ background: SlideBackground, deck: UUID, in context: CGContext, rect: CGRect) {
+    static func drawBackground(_ background: SlideBackground, deck: UUID, in context: CGContext, rect: CGRect, preview: Bool = false) {
         context.saveGState()
         defer { context.restoreGState() }
         context.clip(to: rect)
@@ -32,14 +33,14 @@ enum SlideRenderer {
         case .gradient(let gradient):
             drawGradient(gradient, in: rect, context: context)
         case .image(let ref):
-            if let image = SlideAssets.image(ref.asset, deck: deck) {
+            if let image = SlideAssets.image(ref.asset, deck: deck, preview: preview) {
                 drawImage(image, in: rect, mode: ref.mode, context: context)
             }
         }
     }
 
     /// One element where it sits on the slide: moved, turned and faded.
-    static func draw(_ element: SlideElement, deck: UUID, in context: CGContext) {
+    static func draw(_ element: SlideElement, deck: UUID, in context: CGContext, preview: Bool = false) {
         let frame = element.frame.cg
         context.saveGState()
         defer { context.restoreGState() }
@@ -51,26 +52,35 @@ enum SlideRenderer {
             context.setAlpha(CGFloat(max(element.opacity, 0)))
             context.beginTransparencyLayer(auxiliaryInfo: nil)
         }
-        drawContent(element, deck: deck, in: context)
+        drawContent(element, deck: deck, in: context, preview: preview)
         if faded { context.endTransparencyLayer() }
     }
 
     /// The element's content in its own space: (0, 0) is its frame's top left.
-    static func drawContent(_ element: SlideElement, deck: UUID, in context: CGContext) {
+    /// `placeholders` shows an empty text box's placeholder in gray (the editor only).
+    static func drawContent(_ element: SlideElement, deck: UUID, in context: CGContext, preview: Bool = false, placeholders: Bool = false) {
         let size = element.frame.cg.size
         let rect = CGRect(origin: .zero, size: size)
         UIGraphicsPushContext(context)
         defer { UIGraphicsPopContext() }
         switch element.content {
         case .text(let box):
-            drawText(box.text, in: rect)
+            if placeholders, let placeholder = box.placeholder, box.text.plainText.isEmpty {
+                var shown = box.text
+                var run = box.text.baseRun.with(placeholder)
+                run.color = RGBA(hex: 0x9CA3AF)
+                shown.runs = [run]
+                drawText(shown, in: rect)
+            } else {
+                drawText(box.text, in: rect)
+            }
         case .shape(let shape):
-            drawShape(shape, in: rect, deck: deck, context: context)
+            drawShape(shape, in: rect, deck: deck, context: context, preview: preview)
         case .line(let line):
             let origin = element.frame.cg.origin
             drawLine(line, offset: CGPoint(x: -origin.x, y: -origin.y), context: context)
         case .image(let image):
-            drawImageElement(image, in: rect, deck: deck, context: context)
+            drawImageElement(image, in: rect, deck: deck, context: context, preview: preview)
         case .table(let table):
             drawTable(table, in: rect, context: context)
         }
@@ -98,7 +108,7 @@ enum SlideRenderer {
 
     // MARK: Shapes
 
-    static func drawShape(_ shape: ShapeElement, in rect: CGRect, deck: UUID, context: CGContext) {
+    static func drawShape(_ shape: ShapeElement, in rect: CGRect, deck: UUID, context: CGContext, preview: Bool = false) {
         let path = ShapePaths.path(shape.kind, in: rect, cornerRadius: CGFloat(shape.cornerRadius))
         context.saveGState()
         if let shadow = shape.shadow {
@@ -107,7 +117,7 @@ enum SlideRenderer {
             )
             context.beginTransparencyLayer(auxiliaryInfo: nil)
         }
-        fill(path, with: shape.fill, in: rect, deck: deck, context: context)
+        fill(path, with: shape.fill, in: rect, deck: deck, context: context, preview: preview)
         if let stroke = shape.stroke, stroke.width > 0 {
             context.addPath(path)
             apply(stroke, context: context)
@@ -117,7 +127,7 @@ enum SlideRenderer {
         context.restoreGState()
     }
 
-    static func fill(_ path: CGPath, with fill: Fill, in rect: CGRect, deck: UUID, context: CGContext) {
+    static func fill(_ path: CGPath, with fill: Fill, in rect: CGRect, deck: UUID, context: CGContext, preview: Bool = false) {
         switch fill {
         case .none:
             break
@@ -132,7 +142,7 @@ enum SlideRenderer {
             drawGradient(gradient, in: rect, context: context)
             context.restoreGState()
         case .image(let ref):
-            guard let image = SlideAssets.image(ref.asset, deck: deck) else { return }
+            guard let image = SlideAssets.image(ref.asset, deck: deck, preview: preview) else { return }
             context.saveGState()
             context.addPath(path)
             context.clip()
@@ -213,8 +223,8 @@ enum SlideRenderer {
 
     // MARK: Images
 
-    static func drawImageElement(_ element: ImageElement, in rect: CGRect, deck: UUID, context: CGContext) {
-        guard let image = SlideAssets.image(element.asset, deck: deck) else {
+    static func drawImageElement(_ element: ImageElement, in rect: CGRect, deck: UUID, context: CGContext, preview: Bool = false) {
+        guard let image = SlideAssets.image(element.asset, deck: deck, preview: preview) else {
             // A missing file shows as a gray box rather than nothing.
             context.setFillColor(UIColor.systemGray4.resolvedColor(with: UITraitCollection(userInterfaceStyle: .light)).cgColor)
             context.fill(rect)
@@ -295,14 +305,14 @@ enum SlideRenderer {
     // MARK: Images of slides and elements
 
     /// The slide as a bitmap `width` points wide.
-    static func image(of slide: SlideContent, deck: UUID, width: CGFloat, scale: CGFloat = 2) -> UIImage {
+    static func image(of slide: SlideContent, deck: UUID, width: CGFloat, scale: CGFloat = 2, preview: Bool = true) -> UIImage {
         let format = UIGraphicsImageRendererFormat()
         format.scale = scale
         format.opaque = true
         let factor = width / size.width
         return UIGraphicsImageRenderer(size: CGSize(width: width, height: size.height * factor), format: format).image { context in
             context.cgContext.scaleBy(x: factor, y: factor)
-            draw(slide, deck: deck, in: context.cgContext)
+            draw(slide, deck: deck, in: context.cgContext, preview: preview)
         }
     }
 
