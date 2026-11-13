@@ -419,8 +419,8 @@ struct SlideCanvasView: View {
     }
 }
 
-/// The selected element's frame: eight handles to resize, one above to turn it. A line has a handle on each end.
-/// Edges and ends snap like moving does; turning settles on every 15°.
+/// The selected element's frame: eight handles to resize (corners keep the shape, edges change it), one above
+/// to turn it. A line has a handle on each end. Edges and ends snap like moving does; turning settles on every 15°.
 struct SelectionOverlay: View {
     @Bindable var editor: DeckEditor
     let element: SlideElement
@@ -553,9 +553,18 @@ struct SelectionOverlay: View {
                 if handle.x == 1 { right = max(right + localX, left + 16) }
                 if handle.y == 0 { top = min(top + localY, bottom - 16) }
                 if handle.y == 1 { bottom = max(bottom + localY, top + 16) }
+                let corner = handle.x != 0.5 && handle.y != 0.5
+                if corner {
+                    // A corner keeps the width-to-height ratio: the larger change wins, the opposite corner stays.
+                    let factor = max((right - left) / width, (bottom - top) / height, 16 / min(width, height))
+                    let newWidth = width * factor
+                    let newHeight = height * factor
+                    if handle.x == 0 { left = right - newWidth } else { right = left + newWidth }
+                    if handle.y == 0 { top = bottom - newHeight } else { bottom = top + newHeight }
+                }
                 var lines: [SnapLine] = []
                 let unturned = origin.rotation.truncatingRemainder(dividingBy: 360) == 0
-                if unturned {
+                if unturned, !corner {
                     let center = origin.frame.center
                     let snapper = snapper
                     if handle.x != 0.5, let x = snapper.snap([Double(center.x) + (handle.x == 0 ? left : right)], vertical: true) {

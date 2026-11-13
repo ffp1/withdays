@@ -271,10 +271,14 @@ enum SlideRenderer {
         return UIImage(cgImage: part)
     }
 
-    /// The image fitted inside the rect (letterboxed) or filling it (cut at the rect's edges).
+    /// The image stretched to the rect, fitted inside it (letterboxed), or filling it (cut at the rect's edges).
     static func drawImage(_ image: UIImage, in rect: CGRect, mode: ImageFitMode, context: CGContext) {
         let size = image.size
         guard size.width > 0, size.height > 0 else { return }
+        if mode == .stretch {
+            image.draw(in: rect)
+            return
+        }
         let scale = mode == .fit
             ? min(rect.width / size.width, rect.height / size.height)
             : max(rect.width / size.width, rect.height / size.height)

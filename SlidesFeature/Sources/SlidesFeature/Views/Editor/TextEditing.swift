@@ -2,13 +2,15 @@ import SwiftUI
 import UIKit
 
 /// The text view being typed in, for the accessory bar and the format sheet: formatting goes to the
-/// selected range, or to what's typed next when nothing is selected.
+/// selected range, or to what's typed next when nothing is selected. The text view shows the text at the size
+/// it's drawn on screen (`scale` × slide points); runs remember their slide sizes, so reading back is exact.
 @MainActor
 @Observable
 final class TextEditingController {
     @ObservationIgnored weak var textView: UITextView?
     /// The text's box settings and fallback formatting.
     @ObservationIgnored var base = RichText(runs: [])
+    @ObservationIgnored var scale: CGFloat = 1
     @ObservationIgnored var onChange: ((RichText) -> Void)?
     /// Bumped when the selection or the text changes, so the bar and the sheet show what's there.
     private(set) var revision = 0
@@ -17,6 +19,11 @@ final class TextEditingController {
 
     func touch() {
         revision += 1
+    }
+
+    /// What's typed next in an empty box (or after the formatting was reset).
+    var baseAttributes: [NSAttributedString.Key: Any] {
+        RichTextConverter.attributes(base.baseRun, in: base, scale: scale)
     }
 
     /// The formatting at the start of the selection (or what's typed next).
@@ -30,35 +37,35 @@ final class TextEditingController {
         } else {
             attributes = textView.typingAttributes
         }
-        return RichTextConverter.run(from: attributes, scale: 1, fallback: base.baseRun)
+        return RichTextConverter.run(from: attributes, scale: scale, fallback: base.baseRun)
     }
 
     func applyRun(_ change: (inout TextRun) -> Void) {
         guard let textView else { return }
         let range = textView.selectedRange
         if range.length == 0 {
-            var run = RichTextConverter.run(from: textView.typingAttributes, scale: 1, fallback: base.baseRun)
+            var run = RichTextConverter.run(from: textView.typingAttributes, scale: scale, fallback: base.baseRun)
             change(&run)
-            textView.typingAttributes = RichTextConverter.attributes(run, in: base, scale: 1)
+            textView.typingAttributes = RichTextConverter.attributes(run, in: base, scale: scale)
             touch()
             return
         }
         let storage = textView.textStorage
         storage.beginEditing()
         storage.enumerateAttributes(in: range) { attributes, part, _ in
-            var run = RichTextConverter.run(from: attributes, scale: 1, fallback: base.baseRun)
+            var run = RichTextConverter.run(from: attributes, scale: scale, fallback: base.baseRun)
             change(&run)
-            storage.setAttributes(RichTextConverter.attributes(run, in: base, scale: 1), range: part)
+            storage.setAttributes(RichTextConverter.attributes(run, in: base, scale: scale), range: part)
         }
         storage.endEditing()
         textView.selectedRange = range
         sync()
     }
 
-    /// Alignment and spacing belong to the whole box.
+    /// Alignment, spacing and effects belong to the whole box.
     func applyBox(_ change: (inout RichText) -> Void) {
         guard let textView else { return }
-        var text = RichTextConverter.richText(from: textView.attributedText, base: base, scale: 1)
+        var text = RichTextConverter.richText(from: textView.attributedText, base: base, scale: scale)
         change(&text)
         base.hAlign = text.hAlign
         base.vAlign = text.vAlign
@@ -67,17 +74,28 @@ final class TextEditingController {
         base.outline = text.outline
         base.shadow = text.shadow
         let range = textView.selectedRange
-        textView.attributedText = RichTextConverter.attributed(text)
+        textView.attributedText = RichTextConverter.attributed(text, scale: scale)
         textView.selectedRange = range
-        var typing = RichTextConverter.run(from: textView.typingAttributes, scale: 1, fallback: base.baseRun)
+        var typing = RichTextConverter.run(from: textView.typingAttributes, scale: scale, fallback: base.baseRun)
         typing.text = ""
-        textView.typingAttributes = RichTextConverter.attributes(typing, in: base, scale: 1)
+        textView.typingAttributes = RichTextConverter.attributes(typing, in: base, scale: scale)
         sync()
+    }
+
+    /// The view was zoomed while typing: the same text at the new size, the caret where it was.
+    func rescale(_ newScale: CGFloat) {
+        guard let textView, abs(newScale - scale) > 0.0001 else { return }
+        let text = RichTextConverter.richText(from: textView.attributedText, base: base, scale: scale)
+        scale = newScale
+        let range = textView.selectedRange
+        textView.attributedText = RichTextConverter.attributed(text, scale: newScale)
+        textView.selectedRange = range
+        textView.typingAttributes = baseAttributes
     }
 
     func sync() {
         guard let textView else { return }
-        let text = RichTextConverter.richText(from: textView.attributedText, base: base, scale: 1)
+        let text = RichTextConverter.richText(from: textView.attributedText, base: base, scale: scale)
         onChange?(text)
         if let container = textView.superview as? RichTextContainerView {
             container.text = base
@@ -94,12 +112,13 @@ final class TextEditingController {
     }
 }
 
-/// Typing in a text box or a table cell on the canvas. The text view works in slide points and is scaled down,
-/// so what's typed looks like the slide. Japanese input is left alone: the text is only read back, never rewritten.
+/// Typing in a text box or a table cell on the canvas, at the size the slide is shown, so the text wraps and
+/// aligns where it will be drawn. Japanese input is left alone: the text is only read back, never rewritten.
 struct RichTextEditingView: UIViewRepresentable {
     let text: RichText
     /// The box, in slide points.
     let size: CGSize
+    /// In slide points.
     let inset: CGFloat
     let scale: CGFloat
     let controller: TextEditingController
@@ -114,22 +133,21 @@ struct RichTextEditingView: UIViewRepresentable {
         let container = RichTextContainerView()
         let textView = container.textView
         textView.delegate = context.coordinator
+        controller.textView = textView
+        controller.base = text
+        controller.scale = scale
+        controller.onChange = onChange
         // The box's own font and alignment from the start, so the first letters typed into an empty box
         // look as they will (UIKit falls back to these when it resets what's typed next).
-        let base = RichTextConverter.attributes(text.baseRun, in: text, scale: 1)
+        let base = controller.baseAttributes
         textView.font = base[.font] as? UIFont
         textView.textColor = text.baseRun.color.uiColor
         textView.textAlignment = (base[.paragraphStyle] as? NSParagraphStyle)?.alignment ?? .left
-        textView.attributedText = RichTextConverter.attributed(text)
+        textView.attributedText = RichTextConverter.attributed(text, scale: scale)
         textView.typingAttributes = base
         textView.tintColor = SlidesTheme.brandUI
         container.text = text
-        container.inset = inset
-        container.slideSize = size
-        container.scale = scale
-        controller.textView = textView
-        controller.base = text
-        controller.onChange = onChange
+        container.inset = inset * scale
         let selectAll = selectAll
         DispatchQueue.main.async {
             textView.becomeFirstResponder()
@@ -138,6 +156,7 @@ struct RichTextEditingView: UIViewRepresentable {
             } else {
                 textView.selectedRange = NSRange(location: textView.textStorage.length, length: 0)
             }
+            if textView.textStorage.length == 0 { textView.typingAttributes = controller.baseAttributes }
             controller.touch()
         }
         return container
@@ -145,10 +164,9 @@ struct RichTextEditingView: UIViewRepresentable {
 
     func updateUIView(_ container: RichTextContainerView, context: Context) {
         controller.onChange = onChange
-        if container.slideSize != size || container.scale != scale || container.inset != inset {
-            container.slideSize = size
-            container.scale = scale
-            container.inset = inset
+        controller.rescale(scale)
+        if container.inset != inset * scale {
+            container.inset = inset * scale
             container.setNeedsLayout()
         }
     }
@@ -172,7 +190,7 @@ struct RichTextEditingView: UIViewRepresentable {
             MainActor.assumeIsolated {
                 // In an empty box UIKit forgets the formatting when the caret moves; give it back.
                 if textView.textStorage.length == 0 {
-                    textView.typingAttributes = RichTextConverter.attributes(controller.base.baseRun, in: controller.base, scale: 1)
+                    textView.typingAttributes = controller.baseAttributes
                 }
                 controller.touch()
             }
@@ -180,19 +198,19 @@ struct RichTextEditingView: UIViewRepresentable {
     }
 }
 
-/// Holds the scaled text view and keeps its text placed by the box's vertical alignment.
+/// Holds the text view at the box's on-screen size and keeps its text placed by the box's vertical alignment.
 final class RichTextContainerView: UIView {
     let textView = UITextView()
     var text = RichText(runs: [])
+    /// On-screen points.
     var inset: CGFloat = 0
-    var slideSize = CGSize(width: 100, height: 100)
-    var scale: CGFloat = 1
 
     override init(frame: CGRect) {
         super.init(frame: frame)
         backgroundColor = .clear
         textView.backgroundColor = .clear
         textView.textContainer.lineFragmentPadding = 0
+        textView.textContainer.widthTracksTextView = true
         textView.isScrollEnabled = false
         textView.clipsToBounds = false
         textView.autocorrectionType = .default
@@ -208,19 +226,15 @@ final class RichTextContainerView: UIView {
 
     override func layoutSubviews() {
         super.layoutSubviews()
-        // Bounds (not frame) with a transform: the text view is laid out at slide size, then drawn scaled.
-        textView.transform = CGAffineTransform(scaleX: scale, y: scale)
-        textView.bounds = CGRect(origin: .zero, size: slideSize)
-        textView.center = CGPoint(x: bounds.midX, y: bounds.midY)
-        textView.textContainer.size = CGSize(width: slideSize.width - inset * 2, height: .greatestFiniteMagnitude)
+        textView.frame = bounds
         alignVertically()
     }
 
     /// Top / middle / bottom, as the slide draws it.
     func alignVertically() {
-        let width = slideSize.width - inset * 2
+        let width = max(bounds.width - inset * 2, 1)
         let height = RichTextConverter.height(of: textView.attributedText, width: width)
-        let space = max(slideSize.height - inset * 2 - height, 0)
+        let space = max(bounds.height - inset * 2 - height, 0)
         let top: CGFloat = switch text.vAlign {
         case .top: 0
         case .middle: space / 2

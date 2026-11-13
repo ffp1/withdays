@@ -310,7 +310,9 @@ struct SlideWriter {
         if let pixels = SlideAssets.pixelSize(ref.asset, deck: deck), pixels.width > 0, pixels.height > 0, box.width > 0, box.height > 0 {
             let imageAspect = Double(pixels.width / pixels.height)
             let boxAspect = Double(box.width / box.height)
-            if ref.mode == .fill {
+            if ref.mode == .stretch {
+                // As it is, stretched to the box.
+            } else if ref.mode == .fill {
                 var cut = CropInsets()
                 if imageAspect > boxAspect {
                     let keep = boxAspect / imageAspect
@@ -476,7 +478,9 @@ struct SlideWriter {
         let imageAspect = visibleWidth / visibleHeight
         let boxAspect = Double(frame.width / max(frame.height, 1))
         var placed = frame
-        if image.mode == .fill {
+        if image.mode == .stretch {
+            // Stretched to the frame: the picture as it is, no extra cut.
+        } else if image.mode == .fill {
             // Cut a little more from the long sides so the picture keeps its shape in the frame.
             if imageAspect > boxAspect {
                 let extra = (1 - boxAspect / imageAspect) * (1 - crop.left - crop.right) / 2

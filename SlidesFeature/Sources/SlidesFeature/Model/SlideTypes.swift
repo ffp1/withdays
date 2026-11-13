@@ -118,9 +118,15 @@ struct LinearGradientFill: Codable, Hashable {
 }
 
 enum ImageFitMode: String, Codable, CaseIterable {
-    case fit, fill
+    case stretch, fit, fill
 
-    var label: String { self == .fit ? "全体を表示" : "枠に合わせて切り抜く" }
+    var label: String {
+        switch self {
+        case .stretch: "枠に合わせて伸ばす"
+        case .fit: "全体を表示"
+        case .fill: "枠に合わせて切り抜く"
+        }
+    }
 }
 
 /// An image file in the deck's asset folder.

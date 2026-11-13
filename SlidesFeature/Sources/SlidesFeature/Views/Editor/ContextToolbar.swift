@@ -20,6 +20,7 @@ struct ContextToolbar: View {
                 items(for: element)
                 more(element)
             } else {
+                item("挿入", "plus") { open(.insert) }
                 item("背景", "paintbrush") { open(.background) }
                 item("トランジション", "rectangle.portrait.on.rectangle.portrait.angled") { open(.transition) }
             }

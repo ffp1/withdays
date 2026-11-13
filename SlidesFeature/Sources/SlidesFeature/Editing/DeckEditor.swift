@@ -347,7 +347,7 @@ final class DeckEditor {
         let size = CGSize(width: stored.size.width * scale, height: stored.size.height * scale)
         insert(SlideElement(
             frame: SlideRect(x: 0, y: 0, width: Double(size.width), height: Double(size.height)),
-            content: .image(ImageElement(asset: stored.name))
+            content: .image(ImageElement(asset: stored.name, mode: .stretch))
         ))
         ImageTextIndexer.shared.index(stored.name, deck: deckID, context: context)
     }

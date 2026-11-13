@@ -97,3 +97,7 @@ One line per decision: the decision, then why.
 - Text that runs past its box is drawn in full (the drawing area grows to fit it).
 - At the last slide, 次へ (tap or button) shakes the slide with an error haptic.
 - Images can come from a link (https / http); SVG (from a link or a file) is drawn with WebKit off screen to a PNG, its longest side 1024 pt.
+- Corner handles keep the element's shape (the larger change wins); edge handles change it. Corner resizes don't snap.
+- Images have a third mode, 枠に合わせて伸ばす (stretch), and new images use it, so an edge handle stretches the picture.
+- Typing happens at the size the slide is shown (fonts × the view's scale), not in a slide-sized view scaled down: wrapping and alignment match the slide.
+- With nothing selected, the bar has 挿入 too.
