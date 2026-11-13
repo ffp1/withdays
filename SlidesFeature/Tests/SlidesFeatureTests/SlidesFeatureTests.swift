@@ -12,10 +12,24 @@ final class ModelTests: XCTestCase {
             content: .shape(ShapeElement(kind: .star, fill: .gradient(.default), stroke: Stroke(color: .black, width: 4, dash: .dash), shadow: ShadowStyle()))
         ))
         slide.elements.append(SlideElement(frame: SlideRect(x: 0, y: 0, width: 600, height: 300), content: .table(.make(rows: 2, columns: 3))))
-        slide.animations.append(ElementAnimation(elementID: slide.elements[0].id, category: .exit, effect: .slideFromLeft, start: .afterPrevious))
-        slide.transition = SlideTransition(kind: .pushLeft, duration: 0.8)
+        slide.animations.append(ElementAnimation(elementID: slide.elements[0].id, category: .exit, effect: .slideIn, start: .afterPrevious, angle: 180))
+        slide.transition = SlideTransition(kind: .push, duration: 0.8, angle: 270)
         let decoded = try XCTUnwrap(SlideContent.decode(slide.encoded()))
         XCTAssertEqual(decoded, slide)
+    }
+
+    func testOlderDecksStillDecode() throws {
+        let element = UUID()
+        let json = """
+        {"id":"\(UUID().uuidString)","background":{"solid":{"_0":{"r":1,"g":1,"b":1,"a":1}}},"elements":[],
+         "transition":{"kind":"pushRight","duration":0.7},
+         "animations":[{"id":"\(UUID().uuidString)","elementID":"\(element.uuidString)","category":"entrance","effect":"slideFromTop","start":"onTap","duration":0.5,"delay":0}]}
+        """
+        let slide = try JSONDecoder().decode(SlideContent.self, from: Data(json.utf8))
+        XCTAssertEqual(slide.transition.kind, .push)
+        XCTAssertEqual(slide.transition.angle, 180)
+        XCTAssertEqual(slide.animations.first?.effect, .slideIn)
+        XCTAssertEqual(slide.animations.first?.angle, 270)
     }
 
     func testCopiesGetNewIDsAndKeepAnimationsOnTheirElements() {
@@ -148,7 +162,7 @@ final class PPTXTests: XCTestCase {
         first.transition = SlideTransition(kind: .fade)
         first.animations = [
             ElementAnimation(elementID: first.elements[0].id, effect: .fade, start: .withPrevious),
-            ElementAnimation(elementID: first.elements[1].id, effect: .slideFromBottom, start: .onTap),
+            ElementAnimation(elementID: first.elements[1].id, effect: .slideIn, start: .onTap),
         ]
         var second = SlideContent(background: .gradient(.default))
         var line = SlideElement(frame: SlideRect(x: 0, y: 0, width: 0, height: 0), content: .line(LineElement(start: SlidePoint(x: 900, y: 100), end: SlidePoint(x: 100, y: 500), endArrow: true)))

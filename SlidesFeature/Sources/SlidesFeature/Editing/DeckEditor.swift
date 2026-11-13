@@ -48,6 +48,8 @@ final class DeckEditor {
     var editing: EditTarget?
     /// The lines a dragged element is lined up with, while it's dragged.
     var snapLines: [SnapLine] = []
+    /// Which way the last change of slide went, for the slide's motion.
+    var movingForward = true
 
     private var history = EditHistory<Snapshot>(limit: 100)
     private var interactionStart: Snapshot?
@@ -148,6 +150,15 @@ final class DeckEditor {
     }
 
     // MARK: Slides
+
+    /// Goes to a slide with the slide motion. The direction is set first, so the slide leaving moves the right way too.
+    func show(_ target: Int) {
+        guard slides.indices.contains(target), target != currentIndex else { return }
+        movingForward = target > currentIndex
+        DispatchQueue.main.async {
+            withAnimation(.snappy(duration: 0.3)) { self.currentIndex = target }
+        }
+    }
 
     /// New slides go after the current one.
     func addSlide(_ layout: SlideLayout) {

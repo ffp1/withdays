@@ -108,14 +108,18 @@ struct EditorView: View {
                 }
             }
         }
-        .fileImporter(isPresented: $importingImage, allowedContentTypes: [.image]) { result in
-            do {
-                let url = try result.get()
-                let scoped = url.startAccessingSecurityScopedResource()
-                defer { if scoped { url.stopAccessingSecurityScopedResource() } }
-                try editor.insertImage(try Data(contentsOf: url))
-            } catch {
-                errorMessage = (error as? SlidesFiles.Failure)?.message ?? "画像を読み込めませんでした。"
+        .fileImporter(isPresented: $importingImage, allowedContentTypes: [.image, .svg]) { result in
+            Task {
+                do {
+                    let url = try result.get()
+                    let scoped = url.startAccessingSecurityScopedResource()
+                    let data = try Data(contentsOf: url)
+                    if scoped { url.stopAccessingSecurityScopedResource() }
+                    // SVG is drawn to a picture first.
+                    try editor.insertImage(try await ImageLoading.usableData(data))
+                } catch {
+                    errorMessage = error.localizedDescription
+                }
             }
         }
         .deckExport($export)
@@ -258,6 +262,7 @@ struct EditorView: View {
                 insertText: insertText,
                 insertImageFromPhotos: { showPhotos = true },
                 insertImageFromFiles: { importingImage = true },
+                insertImageData: { try editor.insertImage($0) },
                 insertShape: insertShape,
                 insertLine: insertLine,
                 insertTable: insertTable

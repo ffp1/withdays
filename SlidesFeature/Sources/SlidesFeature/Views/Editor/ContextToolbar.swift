@@ -133,6 +133,8 @@ struct InsertSheet: View {
     var insertText: () -> Void
     var insertImageFromPhotos: () -> Void
     var insertImageFromFiles: () -> Void
+    /// An image fetched from a link (SVG already drawn to PNG).
+    var insertImageData: (Data) throws -> Void
     var insertShape: (ShapeKind) -> Void
     var insertLine: (_ startArrow: Bool, _ endArrow: Bool) -> Void
     var insertTable: (_ rows: Int, _ columns: Int) -> Void
@@ -152,6 +154,14 @@ struct InsertSheet: View {
                         }
                         Button { pick(insertImageFromFiles) } label: {
                             Label("ファイル", systemImage: "folder")
+                        }
+                        NavigationLink {
+                            ImageLinkView { data in
+                                try insertImageData(data)
+                                dismiss()
+                            }
+                        } label: {
+                            Label("リンク", systemImage: "link")
                         }
                     }
                     .foregroundStyle(.primary)
@@ -251,5 +261,70 @@ struct TableSizePicker: View {
         }
         .navigationTitle("テーブル")
         .navigationBarTitleDisplayMode(.inline)
+    }
+}
+
+/// An image from a web address: PNG, JPEG, GIF, HEIC, WebP… and SVG.
+struct ImageLinkView: View {
+    var onLoaded: (Data) throws -> Void
+
+    @State private var link = ""
+    @State private var loading = false
+    @State private var errorMessage: String?
+    @FocusState private var focused: Bool
+
+    var body: some View {
+        Form {
+            Section {
+                TextField("https://…", text: $link)
+                    .keyboardType(.URL)
+                    .textContentType(.URL)
+                    .textInputAutocapitalization(.never)
+                    .autocorrectionDisabled()
+                    .focused($focused)
+                    .submitLabel(.go)
+                    .onSubmit(load)
+            } footer: {
+                Text("画像（PNG・JPEG・GIF・WebP・SVG など）のリンクを入力します。")
+            }
+            if let errorMessage {
+                Section {
+                    Text(errorMessage)
+                        .font(.system(size: 14))
+                        .foregroundStyle(.red)
+                }
+            }
+            Section {
+                Button(action: load) {
+                    HStack {
+                        Spacer()
+                        if loading { ProgressView() } else { Text("挿入").font(.system(size: 16, weight: .bold)) }
+                        Spacer()
+                    }
+                    .frame(minHeight: 34)
+                }
+                .brandGlass(enabled: !link.isEmpty && !loading)
+                .disabled(link.isEmpty || loading)
+                .listRowBackground(Color.clear)
+            }
+        }
+        .navigationTitle("リンク")
+        .navigationBarTitleDisplayMode(.inline)
+        .onAppear { focused = true }
+    }
+
+    private func load() {
+        guard !link.isEmpty, !loading else { return }
+        loading = true
+        errorMessage = nil
+        Task {
+            do {
+                let data = try await ImageLoading.download(link)
+                try onLoaded(data)
+            } catch {
+                errorMessage = error.localizedDescription
+            }
+            loading = false
+        }
     }
 }

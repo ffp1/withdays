@@ -91,3 +91,9 @@ One line per decision: the decision, then why.
 - An element has at most one 登場 and one 退場 (登場 first); more of the same made no sense.
 - Format sheets stay at the medium height and scroll inside.
 - Every delete action is red.
+- Push and cover take the side the new slide comes from as an angle (0° the right, 90° below, 180° the left, 270° above), with eight arrows and a slider; PowerPoint gets the nearest of its four directions. Older decks' push left / right read as 0° / 180°.
+- Zoom (transition and element animation) is ズームイン (from small) or ズームアウト (from big). スライドイン takes an angle the same way; older decks' four slide-ins read as their angles.
+- A pinch moves the view with the fingers as well as zooming it (a UIKit pinch recognizer, since SwiftUI's doesn't report where the fingers are).
+- Text that runs past its box is drawn in full (the drawing area grows to fit it).
+- At the last slide, 次へ (tap or button) shakes the slide with an error haptic.
+- Images can come from a link (https / http); SVG (from a link or a file) is drawn with WebKit off screen to a PNG, its longest side 1024 pt.

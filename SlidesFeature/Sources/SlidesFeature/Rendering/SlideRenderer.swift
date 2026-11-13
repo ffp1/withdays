@@ -19,6 +19,9 @@ enum SlideRenderer {
         case .text(let box):
             if let shadow = box.text.shadow { extent = shadow.blur * 1.6 + max(abs(shadow.x), abs(shadow.y)) }
             extent = max(extent, box.text.outline?.width ?? 0)
+            // Text longer than its box runs past it, and is drawn in full.
+            let height = RichTextConverter.height(of: RichTextConverter.attributed(box.text), width: CGFloat(element.frame.width))
+            extent += max(0, Double(height) - element.frame.height)
         default:
             break
         }

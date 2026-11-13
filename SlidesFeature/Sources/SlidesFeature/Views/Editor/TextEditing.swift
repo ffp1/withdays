@@ -114,8 +114,14 @@ struct RichTextEditingView: UIViewRepresentable {
         let container = RichTextContainerView()
         let textView = container.textView
         textView.delegate = context.coordinator
+        // The box's own font and alignment from the start, so the first letters typed into an empty box
+        // look as they will (UIKit falls back to these when it resets what's typed next).
+        let base = RichTextConverter.attributes(text.baseRun, in: text, scale: 1)
+        textView.font = base[.font] as? UIFont
+        textView.textColor = text.baseRun.color.uiColor
+        textView.textAlignment = (base[.paragraphStyle] as? NSParagraphStyle)?.alignment ?? .left
         textView.attributedText = RichTextConverter.attributed(text)
-        textView.typingAttributes = RichTextConverter.attributes(text.baseRun, in: text, scale: 1)
+        textView.typingAttributes = base
         textView.tintColor = SlidesTheme.brandUI
         container.text = text
         container.inset = inset
@@ -163,7 +169,13 @@ struct RichTextEditingView: UIViewRepresentable {
         }
 
         func textViewDidChangeSelection(_ textView: UITextView) {
-            MainActor.assumeIsolated { controller.touch() }
+            MainActor.assumeIsolated {
+                // In an empty box UIKit forgets the formatting when the caret moves; give it back.
+                if textView.textStorage.length == 0 {
+                    textView.typingAttributes = RichTextConverter.attributes(controller.base.baseRun, in: controller.base, scale: 1)
+                }
+                controller.touch()
+            }
         }
     }
 }
@@ -196,10 +208,11 @@ final class RichTextContainerView: UIView {
 
     override func layoutSubviews() {
         super.layoutSubviews()
-        textView.transform = .identity
-        textView.frame = CGRect(origin: .zero, size: slideSize)
+        // Bounds (not frame) with a transform: the text view is laid out at slide size, then drawn scaled.
         textView.transform = CGAffineTransform(scaleX: scale, y: scale)
+        textView.bounds = CGRect(origin: .zero, size: slideSize)
         textView.center = CGPoint(x: bounds.midX, y: bounds.midY)
+        textView.textContainer.size = CGSize(width: slideSize.width - inset * 2, height: .greatestFiniteMagnitude)
         alignVertically()
     }
 

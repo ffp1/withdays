@@ -378,15 +378,26 @@ struct SlideWriter {
         return "<p:bg><p:bgPr>\(fill)<a:effectLst/></p:bgPr></p:bg>"
     }
 
+    /// PowerPoint's direction for a side the slide comes from: it moves away from that side.
+    static func direction(_ angle: Double) -> String {
+        var normalized = angle.truncatingRemainder(dividingBy: 360)
+        if normalized < 0 { normalized += 360 }
+        switch Int((normalized / 90).rounded()) % 4 {
+        case 0: return "l"
+        case 1: return "u"
+        case 2: return "r"
+        default: return "d"
+        }
+    }
+
     private func transitionXML(_ transition: SlideTransition) -> String {
         let effect: String
         switch transition.kind {
         case .none: return ""
         case .fade: effect = "<p:fade/>"
-        case .pushLeft: effect = "<p:push dir=\"l\"/>"
-        case .pushRight: effect = "<p:push dir=\"r\"/>"
-        case .cover: effect = "<p:cover dir=\"l\"/>"
-        case .zoom: effect = "<p:zoom/>"
+        case .push: effect = "<p:push dir=\"\(Self.direction(transition.angle))\"/>"
+        case .cover: effect = "<p:cover dir=\"\(Self.direction(transition.angle))\"/>"
+        case .zoom: effect = "<p:zoom dir=\"\(transition.zoomOut ? "out" : "in")\"/>"
         }
         let speed = transition.duration < 0.4 ? "fast" : transition.duration < 0.9 ? "med" : "slow"
         return "<p:transition spd=\"\(speed)\">\(effect)</p:transition>"
@@ -662,26 +673,32 @@ struct SlideWriter {
         case .fade:
             presetID = 10
             behaviors += "<p:animEffect transition=\"\(entrance ? "in" : "out")\" filter=\"fade\"><p:cBhvr><p:cTn id=\"\(ids.next())\" dur=\"\(duration)\"/>\(target)</p:cBhvr></p:animEffect>"
-        case .slideFromTop, .slideFromBottom, .slideFromLeft, .slideFromRight:
+        case .slideIn:
             presetID = 2
-            let (attribute, outside, inside): (String, String, String) = switch animation.effect {
-            case .slideFromTop: ("ppt_y", "0-#ppt_h/2", "#ppt_y")
-            case .slideFromBottom: ("ppt_y", "1+#ppt_h/2", "#ppt_y")
-            case .slideFromLeft: ("ppt_x", "0-#ppt_w/2", "#ppt_x")
+            let side = Self.direction(animation.angle)
+            let (attribute, outside, inside): (String, String, String) = switch side {
+            case "d": ("ppt_y", "0-#ppt_h/2", "#ppt_y")
+            case "u": ("ppt_y", "1+#ppt_h/2", "#ppt_y")
+            case "r": ("ppt_x", "0-#ppt_w/2", "#ppt_x")
             default: ("ppt_x", "1+#ppt_w/2", "#ppt_x")
             }
-            subtype = switch animation.effect {
-            case .slideFromTop: 1
-            case .slideFromBottom: 4
-            case .slideFromLeft: 8
+            subtype = switch side {
+            case "d": 1
+            case "u": 4
+            case "r": 8
             default: 2
             }
             behaviors += entrance ? motion(attribute, from: outside, to: inside) : motion(attribute, from: inside, to: outside)
         case .zoom:
             presetID = 53
+            let small = "0"
+            let bigWidth = "#ppt_w*2.5"
+            let bigHeight = "#ppt_h*2.5"
+            let fromWidth = animation.zoomOut ? bigWidth : small
+            let fromHeight = animation.zoomOut ? bigHeight : small
             behaviors += entrance
-                ? motion("ppt_w", from: "0", to: "#ppt_w") + motion("ppt_h", from: "0", to: "#ppt_h")
-                : motion("ppt_w", from: "#ppt_w", to: "0") + motion("ppt_h", from: "#ppt_h", to: "0")
+                ? motion("ppt_w", from: fromWidth, to: "#ppt_w") + motion("ppt_h", from: fromHeight, to: "#ppt_h")
+                : motion("ppt_w", from: "#ppt_w", to: animation.zoomOut ? small : bigWidth) + motion("ppt_h", from: "#ppt_h", to: animation.zoomOut ? small : bigHeight)
             behaviors += "<p:animEffect transition=\"\(entrance ? "in" : "out")\" filter=\"fade\"><p:cBhvr><p:cTn id=\"\(ids.next())\" dur=\"\(duration)\"/>\(target)</p:cBhvr></p:animEffect>"
         }
         if !entrance { behaviors += visibility("hidden", at: max(duration - 1, 0)) }

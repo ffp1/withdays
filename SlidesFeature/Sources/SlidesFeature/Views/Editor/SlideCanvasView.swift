@@ -13,8 +13,6 @@ struct SlideCanvasView: View {
 
     @State private var dragOrigin: SlideElement?
     @State private var pinchOrigin: SlideElement?
-    /// True when the last switch went to the next slide, for the slide's direction.
-    @State private var forward = true
     /// The view's zoom (1 = the whole slide fits) and how far it's moved.
     @State private var zoom: CGFloat = 1
     @State private var pan: CGSize = .zero
@@ -22,6 +20,11 @@ struct SlideCanvasView: View {
     /// The pinch in progress: drawn as a cheap scale of the view, applied to the zoom when it ends.
     @State private var liveZoom: CGFloat = 1
     @State private var liveAnchor = UnitPoint.center
+    /// How far the fingers' middle has moved during the pinch.
+    @State private var livePan: CGSize = .zero
+    @State private var pinchStart: CGPoint?
+    /// Pinching an element (resizing it) rather than the view.
+    @State private var pinchingElement = false
     /// Two fingers are (or were just) on the screen: taps and drags on elements wait.
     @State private var pinching = false
 
@@ -38,17 +41,19 @@ struct SlideCanvasView: View {
                 slide(scale: scale, size: size, area: geo.size)
                     .frame(width: size.width, height: size.height)
                     .scaleEffect(liveZoom, anchor: liveAnchor)
-                    .offset(pan)
+                    .offset(CGSize(width: pan.width + livePan.width, height: pan.height + livePan.height))
                     .id(editor.current.id)
                     .transition(.asymmetric(
                         // The next slide comes in from the right, following a swipe to the left.
-                        insertion: .move(edge: forward ? .trailing : .leading).combined(with: .opacity),
-                        removal: .move(edge: forward ? .leading : .trailing).combined(with: .opacity)
+                        insertion: .move(edge: editor.movingForward ? .trailing : .leading).combined(with: .opacity),
+                        removal: .move(edge: editor.movingForward ? .leading : .trailing).combined(with: .opacity)
                     ))
             }
             .frame(width: geo.size.width, height: geo.size.height)
             .contentShape(Rectangle())
-            .simultaneousGesture(pinch(fit: fit, area: geo.size, slideSize: CGSize(width: 1920 * fit, height: 1080 * fit), size: size))
+            .gesture(PinchPanGesture { phase, factor, location in
+                pinched(phase, factor: factor, location: location, area: geo.size, slideSize: CGSize(width: 1920 * fit, height: 1080 * fit), size: size)
+            })
             .clipped()
             .overlay(alignment: .topTrailing) {
                 if zoom > 1.01 {
@@ -70,8 +75,7 @@ struct SlideCanvasView: View {
                 }
             }
         }
-        .onChange(of: editor.currentIndex) { old, new in
-            forward = new >= old
+        .onChange(of: editor.currentIndex) { _, _ in
             zoom = 1
             pan = .zero
         }
@@ -268,59 +272,72 @@ struct SlideCanvasView: View {
             }
     }
 
-    /// With an element selected, pinching resizes it around its middle; otherwise it zooms the view around the
-    /// fingers, smoothly (a scale while pinching, redrawn sharp when the fingers lift).
-    private func pinch(fit: CGFloat, area: CGSize, slideSize: CGSize, size: CGSize) -> some Gesture {
-        MagnifyGesture()
-            .onChanged { value in
-                if !pinching {
-                    pinching = true
-                    cancelDrag()
-                }
-                if editor.editing == nil, let selected = editor.selectedElement {
-                    if pinchOrigin?.id != selected.id {
-                        editor.beginInteraction()
-                        pinchOrigin = selected
-                    }
-                    guard let origin = pinchOrigin else { return }
-                    let factor = max(0.1, min(Double(value.magnification), 10))
-                    editor.changeElement(origin.id) { $0 = Self.scaled(origin, by: factor) }
-                    return
-                }
-                liveAnchor = value.startAnchor
-                // Within 1×–5× overall.
-                liveZoom = min(max(value.magnification, 1 / zoom), 5 / zoom)
+    /// With an element selected, pinching resizes it around its middle. Otherwise it zooms the view around the
+    /// fingers and moves it with them, like a photo: a scale while pinching, redrawn sharp when they lift.
+    private func pinched(_ phase: PinchPanGesture.Phase, factor: CGFloat, location: CGPoint, area: CGSize, slideSize: CGSize, size: CGSize) {
+        switch phase {
+        case .began:
+            pinching = true
+            cancelDrag()
+            pinchStart = location
+            pinchingElement = editor.editing == nil && editor.selectedElement != nil
+            if pinchingElement, let selected = editor.selectedElement {
+                editor.beginInteraction()
+                pinchOrigin = selected
+            } else {
+                // Where the fingers are, as a point of the slide view (before any of this pinch).
+                let origin = CGPoint(
+                    x: area.width / 2 + pan.width - size.width / 2,
+                    y: area.height / 2 + pan.height - size.height / 2
+                )
+                liveAnchor = UnitPoint(
+                    x: (location.x - origin.x) / max(size.width, 1),
+                    y: (location.y - origin.y) / max(size.height, 1)
+                )
             }
-            .onEnded { _ in
-                if pinchOrigin != nil {
-                    pinchOrigin = nil
-                    editor.endInteraction()
-                }
-                if liveZoom != 1 {
-                    // Keep the point under the fingers where it is.
-                    let factor = liveZoom
-                    let shift = CGSize(
-                        width: (0.5 - liveAnchor.x) * size.width * (factor - 1),
-                        height: (0.5 - liveAnchor.y) * size.height * (factor - 1)
-                    )
-                    var transaction = Transaction(animation: nil)
-                    transaction.disablesAnimations = true
-                    withTransaction(transaction) {
-                        zoom = min(max(zoom * factor, 1), 5)
-                        liveZoom = 1
-                        liveAnchor = .center
-                        pan = clampedPan(CGSize(width: pan.width + shift.width, height: pan.height + shift.height), area: area, slideSize: slideSize)
-                    }
-                    if zoom < 1.05 {
-                        withAnimation(.snappy) {
-                            zoom = 1
-                            pan = .zero
-                        }
-                    }
-                }
-                // Lifting two fingers often ends in a stray tap.
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) { pinching = false }
+        case .changed:
+            if pinchingElement {
+                guard let origin = pinchOrigin else { return }
+                let scale = max(0.1, min(Double(factor), 10))
+                editor.changeElement(origin.id) { $0 = Self.scaled(origin, by: scale) }
+                return
             }
+            liveZoom = min(max(factor, 1 / zoom), 5 / zoom)
+            if let start = pinchStart {
+                livePan = CGSize(width: location.x - start.x, height: location.y - start.y)
+            }
+        case .ended:
+            if pinchingElement {
+                pinchOrigin = nil
+                editor.endInteraction()
+            } else {
+                // The point that was under the fingers stays under them.
+                let factor = liveZoom
+                let shift = CGSize(
+                    width: (0.5 - liveAnchor.x) * size.width * (factor - 1) + livePan.width,
+                    height: (0.5 - liveAnchor.y) * size.height * (factor - 1) + livePan.height
+                )
+                var transaction = Transaction(animation: nil)
+                transaction.disablesAnimations = true
+                withTransaction(transaction) {
+                    zoom = min(max(zoom * factor, 1), 5)
+                    liveZoom = 1
+                    liveAnchor = .center
+                    livePan = .zero
+                    pan = clampedPan(CGSize(width: pan.width + shift.width, height: pan.height + shift.height), area: area, slideSize: slideSize)
+                }
+                if zoom < 1.05 {
+                    withAnimation(.snappy) {
+                        zoom = 1
+                        pan = .zero
+                    }
+                }
+            }
+            pinchStart = nil
+            pinchingElement = false
+            // Lifting two fingers often ends in a stray tap.
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) { pinching = false }
+        }
     }
 
     /// A drag that turned into a pinch puts the element back.
@@ -386,7 +403,7 @@ struct SlideCanvasView: View {
                 let target = editor.currentIndex + (dx < 0 ? 1 : -1)
                 guard editor.slides.indices.contains(target) else { return }
                 finishTyping()
-                withAnimation(.snappy(duration: 0.3)) { editor.currentIndex = target }
+                editor.show(target)
             }
     }
 

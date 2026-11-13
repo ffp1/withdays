@@ -58,6 +58,16 @@ struct AnimationSheet: View {
         Picker("効果", selection: binding(animation, \.effect)) {
             ForEach(AnimationEffect.allCases, id: \.self) { Text($0.label).tag($0) }
         }
+        if animation.effect == .slideIn {
+            AngleControl(angle: binding(animation, \.angle))
+        }
+        if animation.effect == .zoom {
+            Picker("ズーム", selection: binding(animation, \.zoomOut)) {
+                Text("ズームイン").tag(false)
+                Text("ズームアウト").tag(true)
+            }
+            .pickerStyle(.segmented)
+        }
         Picker("開始", selection: binding(animation, \.start)) {
             ForEach(AnimationStart.allCases, id: \.self) { Text($0.label).tag($0) }
         }
@@ -93,7 +103,7 @@ struct AnimationOrderView: View {
                         .foregroundStyle(SlidesTheme.brandText)
                         .frame(width: 24)
                     VStack(alignment: .leading, spacing: 2) {
-                        Text("\(name(of: animation.elementID))：\(animation.effect.label)（\(animation.category.label)）")
+                        Text("\(name(of: animation.elementID))：\(effectLabel(animation))（\(animation.category.label)）")
                             .font(.system(size: 14, weight: .semibold))
                         Text(animation.start.label)
                             .font(.system(size: 12))
@@ -109,6 +119,14 @@ struct AnimationOrderView: View {
         }
         .navigationTitle("再生順（長押しで並べ替え）")
         .navigationBarTitleDisplayMode(.inline)
+    }
+
+    private func effectLabel(_ animation: ElementAnimation) -> String {
+        switch animation.effect {
+        case .slideIn: "\(animation.effect.label)・\(MotionAngle.label(animation.angle))"
+        case .zoom: animation.zoomOut ? "ズームアウト" : "ズームイン"
+        default: animation.effect.label
+        }
     }
 
     private func name(of id: UUID) -> String {

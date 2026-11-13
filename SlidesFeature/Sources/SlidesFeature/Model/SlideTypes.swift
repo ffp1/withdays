@@ -535,18 +535,49 @@ enum AnimationCategory: String, Codable, CaseIterable {
 }
 
 enum AnimationEffect: String, Codable, CaseIterable {
-    case appear, fade, slideFromTop, slideFromBottom, slideFromLeft, slideFromRight, zoom
+    case appear, fade, slideIn, zoom
 
     var label: String {
         switch self {
         case .appear: "表示"
         case .fade: "フェード"
-        case .slideFromTop: "スライドイン（上）"
-        case .slideFromBottom: "スライドイン（下）"
-        case .slideFromLeft: "スライドイン（左）"
-        case .slideFromRight: "スライドイン（右）"
+        case .slideIn: "スライドイン"
         case .zoom: "ズーム"
         }
+    }
+
+    /// Older decks stored the side in the effect; `legacyAngle` reads it back.
+    init(from decoder: Decoder) throws {
+        let raw = try decoder.singleValueContainer().decode(String.self)
+        self = AnimationEffect(rawValue: raw) ?? (raw.hasPrefix("slideFrom") ? .slideIn : .fade)
+    }
+
+    static func legacyAngle(_ raw: String) -> Double? {
+        switch raw {
+        case "slideFromRight": 0
+        case "slideFromBottom": 90
+        case "slideFromLeft": 180
+        case "slideFromTop": 270
+        default: nil
+        }
+    }
+}
+
+/// Which way something moves, as the side it comes from: 0° the right, 90° below, 180° the left, 270° above.
+enum MotionAngle {
+    static func label(_ angle: Double) -> String {
+        let names = ["右", "右下", "下", "左下", "左", "左上", "上", "右上"]
+        var normalized = angle.truncatingRemainder(dividingBy: 360)
+        if normalized < 0 { normalized += 360 }
+        let index = Int((normalized / 45).rounded()) % 8
+        let exact = abs(normalized - Double(index) * 45) < 0.5 || abs(normalized - 360) < 0.5
+        return exact ? "\(names[index])から" : "\(Int(normalized.rounded()))°"
+    }
+
+    /// A unit vector toward the side it comes from (y down).
+    static func vector(_ angle: Double) -> CGPoint {
+        let radians = angle * .pi / 180
+        return CGPoint(x: cos(radians), y: sin(radians))
     }
 }
 
@@ -570,26 +601,95 @@ struct ElementAnimation: Codable, Hashable, Identifiable {
     var start: AnimationStart = .onTap
     var duration: Double = 0.5
     var delay: Double = 0
+    /// スライドイン: the side it comes from (see `MotionAngle`).
+    var angle: Double = 90
+    /// ズーム: out (from big to its size) instead of in (from small).
+    var zoomOut = false
+
+    init(
+        id: UUID = UUID(), elementID: UUID, category: AnimationCategory = .entrance, effect: AnimationEffect = .fade,
+        start: AnimationStart = .onTap, duration: Double = 0.5, delay: Double = 0, angle: Double = 90, zoomOut: Bool = false
+    ) {
+        self.id = id
+        self.elementID = elementID
+        self.category = category
+        self.effect = effect
+        self.start = start
+        self.duration = duration
+        self.delay = delay
+        self.angle = angle
+        self.zoomOut = zoomOut
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case id, elementID, category, effect, start, duration, delay, angle, zoomOut
+    }
+
+    /// Reads older decks too (no angle / zoom mode; the side was in the effect).
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decode(UUID.self, forKey: .id)
+        elementID = try container.decode(UUID.self, forKey: .elementID)
+        category = try container.decodeIfPresent(AnimationCategory.self, forKey: .category) ?? .entrance
+        effect = try container.decodeIfPresent(AnimationEffect.self, forKey: .effect) ?? .fade
+        start = try container.decodeIfPresent(AnimationStart.self, forKey: .start) ?? .onTap
+        duration = try container.decodeIfPresent(Double.self, forKey: .duration) ?? 0.5
+        delay = try container.decodeIfPresent(Double.self, forKey: .delay) ?? 0
+        let raw = (try? container.decodeIfPresent(String.self, forKey: .effect)) ?? nil
+        angle = try container.decodeIfPresent(Double.self, forKey: .angle) ?? raw.flatMap(AnimationEffect.legacyAngle) ?? 90
+        zoomOut = try container.decodeIfPresent(Bool.self, forKey: .zoomOut) ?? false
+    }
 }
 
 enum TransitionKind: String, Codable, CaseIterable {
-    case none, fade, pushLeft, pushRight, cover, zoom
+    case none, fade, push, cover, zoom
 
     var label: String {
         switch self {
         case .none: "なし"
         case .fade: "フェード"
-        case .pushLeft: "プッシュ（左）"
-        case .pushRight: "プッシュ（右）"
+        case .push: "プッシュ"
         case .cover: "カバー"
         case .zoom: "ズーム"
         }
+    }
+
+    var hasAngle: Bool { self == .push || self == .cover }
+
+    init(from decoder: Decoder) throws {
+        let raw = try decoder.singleValueContainer().decode(String.self)
+        self = TransitionKind(rawValue: raw) ?? (raw.hasPrefix("push") ? .push : .fade)
     }
 }
 
 struct SlideTransition: Codable, Hashable {
     var kind: TransitionKind = .none
     var duration: Double = 0.5
+    /// プッシュ / カバー: the side the new slide comes from (see `MotionAngle`).
+    var angle: Double = 0
+    /// ズーム: out (the new slide shrinks into place) instead of in (it grows).
+    var zoomOut = false
+
+    init(kind: TransitionKind = .none, duration: Double = 0.5, angle: Double = 0, zoomOut: Bool = false) {
+        self.kind = kind
+        self.duration = duration
+        self.angle = angle
+        self.zoomOut = zoomOut
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case kind, duration, angle, zoomOut
+    }
+
+    /// Reads older decks too ("pushLeft" / "pushRight", no angle).
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        kind = try container.decodeIfPresent(TransitionKind.self, forKey: .kind) ?? .none
+        duration = try container.decodeIfPresent(Double.self, forKey: .duration) ?? 0.5
+        let raw = (try? container.decodeIfPresent(String.self, forKey: .kind)) ?? nil
+        angle = try container.decodeIfPresent(Double.self, forKey: .angle) ?? (raw == "pushRight" ? 180 : 0)
+        zoomOut = try container.decodeIfPresent(Bool.self, forKey: .zoomOut) ?? false
+    }
 }
 
 enum SlideBackground: Codable, Hashable {

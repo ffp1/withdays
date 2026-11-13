@@ -65,7 +65,7 @@ struct PageStrip: View {
         }
         .contentShape(Rectangle())
         .onTapGesture {
-            withAnimation(.snappy(duration: 0.3)) { editor.currentIndex = index }
+            editor.show(index)
         }
         .contextMenu {
             Button("このスライドの次に複製", systemImage: "plus.square.on.square") { editor.duplicateSlide(at: index) }

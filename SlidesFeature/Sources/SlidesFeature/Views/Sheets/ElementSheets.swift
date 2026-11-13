@@ -405,6 +405,24 @@ struct TransitionSheet: View {
                         }
                     }
                 }
+                if transition.kind.hasAngle {
+                    Section("方向") {
+                        AngleControl(angle: Binding(get: { transition.angle }, set: { value in
+                            editor.changeCurrentSlide(coalesce: "transitionAngle-\(editor.current.id)") { $0.transition.angle = value }
+                        }))
+                    }
+                }
+                if transition.kind == .zoom {
+                    Section {
+                        Picker("ズーム", selection: Binding(get: { transition.zoomOut }, set: { value in
+                            editor.changeCurrentSlide { $0.transition.zoomOut = value }
+                        })) {
+                            Text("ズームイン").tag(false)
+                            Text("ズームアウト").tag(true)
+                        }
+                        .pickerStyle(.segmented)
+                    }
+                }
                 if transition.kind != .none {
                     Section {
                         ValueSlider(
@@ -420,5 +438,51 @@ struct TransitionSheet: View {
             .navigationTitle("トランジション")
             .navigationBarTitleDisplayMode(.inline)
         }
+    }
+}
+
+/// The side something comes from: eight arrows for the usual sides, and a slider for any angle.
+struct AngleControl: View {
+    @Binding var angle: Double
+
+    private static let presets: [(angle: Double, icon: String)] = [
+        (225, "arrow.down.right"), (270, "arrow.down"), (315, "arrow.down.left"),
+        (180, "arrow.right"), (0, "arrow.left"),
+        (135, "arrow.up.right"), (90, "arrow.up"), (45, "arrow.up.left"),
+    ]
+
+    var body: some View {
+        VStack(spacing: 10) {
+            // Arrows point the way it moves, laid out around the middle like the sides they come from.
+            Grid(horizontalSpacing: 8, verticalSpacing: 8) {
+                GridRow { arrow(225); arrow(270); arrow(315) }
+                GridRow {
+                    arrow(180)
+                    Text(MotionAngle.label(angle))
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundStyle(.secondary)
+                        .frame(width: 64, height: 40)
+                    arrow(0)
+                }
+                GridRow { arrow(135); arrow(90); arrow(45) }
+            }
+            ValueSlider(title: "角度", value: $angle, range: 0...359, step: 1, format: { "\(Int($0.rounded()))°" })
+        }
+    }
+
+    private func arrow(_ value: Double) -> some View {
+        let icon = Self.presets.first { $0.angle == value }?.icon ?? "arrow.left"
+        let on = abs(angle - value) < 0.5
+        return Button {
+            angle = value
+        } label: {
+            Image(systemName: icon)
+                .font(.system(size: 15, weight: .bold))
+                .foregroundStyle(on ? SlidesTheme.onBrand : Color.primary)
+                .frame(width: 64, height: 40)
+                .background(RoundedRectangle(cornerRadius: 10).fill(on ? SlidesTheme.brand : Color.primary.opacity(0.07)))
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(MotionAngle.label(value))
     }
 }

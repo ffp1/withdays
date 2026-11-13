@@ -50,6 +50,16 @@ struct ElementLook: Equatable {
     /// How it comes in or goes out.
     var effect: AnimationEffect
     var category: AnimationCategory
+    var angle: Double = 90
+    var zoomOut = false
+
+    init(_ animation: ElementAnimation, visible: Bool) {
+        self.visible = visible
+        effect = animation.effect
+        category = animation.category
+        angle = animation.angle
+        zoomOut = animation.zoomOut
+    }
 }
 
 /// 再生: full screen in landscape, one slide at a time on black.
@@ -72,6 +82,7 @@ struct PlayerView: View {
     @State private var outgoing: Int?
     @State private var outgoingLooks: [UUID: ElementLook] = [:]
     @State private var transitionKind = TransitionKind.none
+    @State private var activeTransition = SlideTransition()
     @State private var progress: CGFloat = 1
     @State private var shown = false
     @State private var leaving = false
@@ -80,6 +91,8 @@ struct PlayerView: View {
     @State private var dragDown: CGFloat = 0
     /// Bumped on every slide change, so timers from the last slide stop.
     @State private var generation = 0
+    /// Bumped when there's no slide to go to: the slide shakes.
+    @State private var bump = 0
 
     init(slides: [SlideContent], deck: UUID, start: Int, onExit: @escaping (Int) -> Void) {
         self.slides = slides
@@ -113,6 +126,7 @@ struct PlayerView: View {
             }
         }
         .sensoryFeedback(.selection, trigger: index)
+        .sensoryFeedback(.error, trigger: bump)
     }
 
     private var stage: some View {
@@ -123,18 +137,31 @@ struct PlayerView: View {
                     PlayedSlide(slide: slides[outgoing], deck: deck, scale: scale, looks: outgoingLooks)
                         .frame(width: 1920 * scale, height: 1080 * scale)
                         .modifier(SlideTransitionEffect(
-                            kind: effectiveKind, progress: progress, incoming: false, forward: forward, distance: geo.size.width
+                            kind: effectiveKind, transition: activeTransition, progress: progress, incoming: false,
+                            forward: forward, size: geo.size
                         ))
                 }
                 if let slide {
                     PlayedSlide(slide: slide, deck: deck, scale: scale, looks: looks)
                         .frame(width: 1920 * scale, height: 1080 * scale)
                         .modifier(SlideTransitionEffect(
-                            kind: outgoing == nil ? .none : effectiveKind, progress: progress, incoming: true, forward: forward, distance: geo.size.width
+                            kind: outgoing == nil ? .none : effectiveKind, transition: activeTransition, progress: progress, incoming: true,
+                            forward: forward, size: geo.size
                         ))
                         .id(slide.id)
                         .scaleEffect(1 - min(dragDown, 600) / 1400)
                         .offset(y: dragDown)
+                        .keyframeAnimator(initialValue: CGFloat(0), trigger: bump) { content, x in
+                            content.offset(x: x)
+                        } keyframes: { _ in
+                            KeyframeTrack {
+                                LinearKeyframe(-18, duration: 0.06)
+                                LinearKeyframe(14, duration: 0.07)
+                                LinearKeyframe(-8, duration: 0.07)
+                                LinearKeyframe(4, duration: 0.06)
+                                LinearKeyframe(0, duration: 0.06)
+                            }
+                        }
                 }
             }
             .frame(width: geo.size.width, height: geo.size.height)
@@ -174,8 +201,7 @@ struct PlayerView: View {
                     .disabled(index == 0)
                     .opacity(index == 0 ? 0.4 : 1)
                 Spacer()
-                controlButton("chevron.right", label: "次へ") { go(1, animated: true) }
-                    .disabled(index >= slides.count - 1)
+                controlButton("chevron.right", label: "次へ") { advance() }
                     .opacity(index >= slides.count - 1 ? 0.4 : 1)
             }
         }
@@ -279,7 +305,12 @@ struct PlayerView: View {
     /// current slide's backwards (so coming back to a slide doesn't replay its own).
     private func go(_ delta: Int, animated: Bool) {
         let target = index + delta
-        guard slides.indices.contains(target), !leaving else { return }
+        guard !leaving else { return }
+        guard slides.indices.contains(target) else {
+            // Past the last slide (or before the first): a shake says there's no more.
+            bump += 1
+            return
+        }
         let transition = delta > 0 ? slides[target].transition : slides[index].transition
         forward = delta > 0
         if transition.kind == .none {
@@ -296,6 +327,7 @@ struct PlayerView: View {
             outgoingLooks = looks
             outgoing = index
             transitionKind = transition.kind
+            activeTransition = transition
             progress = 0
             index = target
         }
@@ -325,9 +357,9 @@ struct PlayerView: View {
         var start: [UUID: ElementLook] = [:]
         var end: [UUID: ElementLook] = [:]
         for animation in slide.animations {
-            let look = ElementLook(visible: animation.category == .exit, effect: animation.effect, category: animation.category)
+            let look = ElementLook(animation, visible: animation.category == .exit)
             if start[animation.elementID] == nil { start[animation.elementID] = look }
-            end[animation.elementID] = ElementLook(visible: animation.category == .entrance, effect: animation.effect, category: animation.category)
+            end[animation.elementID] = ElementLook(animation, visible: animation.category == .entrance)
         }
         if animated {
             looks = start
@@ -342,7 +374,7 @@ struct PlayerView: View {
         let current = generation
         for item in timed {
             let animation = item.animation
-            let look = ElementLook(visible: animation.category == .entrance, effect: animation.effect, category: animation.category)
+            let look = ElementLook(animation, visible: animation.category == .entrance)
             DispatchQueue.main.asyncAfter(deadline: .now() + item.start) {
                 guard current == generation else { return }
                 let curve: Animation? = animation.effect == .appear ? nil : .easeInOut(duration: animation.duration)
@@ -354,43 +386,46 @@ struct PlayerView: View {
 }
 
 /// Where a slide is during a transition. Incoming at 0 is where it starts; outgoing at 1 is where it ends.
-/// Push and cover move a whole screen's width; going back runs them the other way.
+/// Push and cover come from the transition's side, a whole screen away; going back runs them the other way.
 struct SlideTransitionEffect: ViewModifier {
     let kind: TransitionKind
+    let transition: SlideTransition
     let progress: CGFloat
     let incoming: Bool
     let forward: Bool
-    let distance: CGFloat
+    let size: CGSize
 
     func body(content: Content) -> some View {
         content
-            .offset(x: offset)
+            .offset(offset)
             .scaleEffect(scale)
             .opacity(opacity)
     }
 
-    /// +1 when the new slide comes from the right.
-    private var side: CGFloat {
-        let fromRight: Bool = switch kind {
-        case .pushRight: !forward
-        default: forward
-        }
-        return fromRight ? 1 : -1
+    /// A screen's distance toward the side the new slide comes from (the other side going back).
+    private var away: CGSize {
+        let vector = MotionAngle.vector(transition.angle)
+        let sign: CGFloat = forward ? 1 : -1
+        return CGSize(width: vector.x * size.width * sign, height: vector.y * size.height * sign)
     }
 
-    private var offset: CGFloat {
+    private var offset: CGSize {
         switch kind {
-        case .pushLeft, .pushRight:
-            return incoming ? (1 - progress) * distance * side : -progress * distance * side
+        case .push:
+            return incoming
+                ? CGSize(width: away.width * (1 - progress), height: away.height * (1 - progress))
+                : CGSize(width: -away.width * progress, height: -away.height * progress)
         case .cover:
-            return incoming ? (1 - progress) * distance * side : 0
+            return incoming ? CGSize(width: away.width * (1 - progress), height: away.height * (1 - progress)) : .zero
         default:
-            return 0
+            return .zero
         }
     }
 
     private var scale: CGFloat {
-        kind == .zoom && incoming ? 0.3 + 0.7 * progress : 1
+        guard kind == .zoom, incoming else { return 1 }
+        let from: CGFloat = transition.zoomOut ? 1.8 : 0.3
+        return from + (1 - from) * progress
     }
 
     private var opacity: Double {
@@ -435,27 +470,23 @@ struct PlayedSlide: View {
     /// Slides stay opaque (they come from off the slide); everything else fades.
     private func hiddenOpacity(_ look: ElementLook?) -> Double {
         guard let look, !look.visible else { return 1 }
-        switch look.effect {
-        case .slideFromTop, .slideFromBottom, .slideFromLeft, .slideFromRight: return reduceMotion ? 0 : 1
-        default: return 0
-        }
+        if look.effect == .slideIn { return reduceMotion ? 0 : 1 }
+        return 0
     }
 
+    /// Zoom in grows from small (and goes out growing); zoom out shrinks from big (and goes out shrinking).
     private func hiddenScale(_ look: ElementLook?) -> CGFloat {
         guard let look, !look.visible, look.effect == .zoom, !reduceMotion else { return 1 }
-        return 0.2
+        let small: CGFloat = 0.2
+        let big: CGFloat = 2.5
+        if look.category == .entrance { return look.zoomOut ? big : small }
+        return look.zoomOut ? small : big
     }
 
     /// Off to its side while hidden, so it slides in from (or out to) there.
     private func hiddenOffset(_ look: ElementLook?, frame: CGRect) -> CGSize {
-        guard let look, !look.visible, !reduceMotion else { return .zero }
-        let distance = 1100 * scale
-        switch look.effect {
-        case .slideFromTop: return CGSize(width: 0, height: -distance)
-        case .slideFromBottom: return CGSize(width: 0, height: distance)
-        case .slideFromLeft: return CGSize(width: -distance * 1.6, height: 0)
-        case .slideFromRight: return CGSize(width: distance * 1.6, height: 0)
-        default: return .zero
-        }
+        guard let look, !look.visible, look.effect == .slideIn, !reduceMotion else { return .zero }
+        let vector = MotionAngle.vector(look.angle)
+        return CGSize(width: vector.x * 1920 * 1.1 * scale, height: vector.y * 1080 * 1.2 * scale)
     }
 }
