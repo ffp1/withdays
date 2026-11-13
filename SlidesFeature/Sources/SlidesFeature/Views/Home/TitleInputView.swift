@@ -119,12 +119,12 @@ struct IMETitleField: UIViewRepresentable {
 
 /// Takes the keyboard as soon as it's on screen.
 private final class FocusingTextView: UITextView {
-    private var focused = false
+    private var tookFocus = false
 
     override func didMoveToWindow() {
         super.didMoveToWindow()
-        guard window != nil, !focused else { return }
-        focused = true
+        guard window != nil, !tookFocus else { return }
+        tookFocus = true
         DispatchQueue.main.async { [weak self] in self?.becomeFirstResponder() }
     }
 }
