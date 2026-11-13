@@ -1,4 +1,5 @@
 import EventKit
+import SlidesFeature
 import SwiftUI
 
 enum HomeRoute: Hashable {
@@ -6,7 +7,7 @@ enum HomeRoute: Hashable {
 }
 
 enum HomeMode: String {
-    case calendar, todo, go, mo, notes
+    case calendar, todo, go, mo, notes, slides
 }
 
 struct HomeView: View {
@@ -57,8 +58,10 @@ struct HomeView: View {
     private var isGo: Bool { mode == HomeMode.go.rawValue }
     private var isMo: Bool { mode == HomeMode.mo.rawValue }
     private var isNotes: Bool { mode == HomeMode.notes.rawValue }
+    /// Slides brings its own navigation, so it's laid over the calendar's rather than inside it.
+    private var isSlides: Bool { mode == HomeMode.slides.rawValue }
     /// Go, Mo and Notes bring their own bars; the calendar's toolbar and buttons stay out of them.
-    private var isOwnScreen: Bool { isGo || isMo || isNotes }
+    private var isOwnScreen: Bool { isGo || isMo || isNotes || isSlides }
 
     private var displayedMonth: Date {
         let id = page ?? 0
@@ -68,7 +71,9 @@ struct HomeView: View {
     /// The screen for the current mode; split out so the body type-checks in reasonable time.
     private var modeContent: some View {
         ZStack {
-            if isNotes {
+            if isSlides {
+                Color(uiColor: .systemBackground)
+            } else if isNotes {
                 NotesView {
                     withAnimation(.snappy) { mode = HomeMode.calendar.rawValue }
                 }
@@ -125,6 +130,16 @@ struct HomeView: View {
     /// The layers over the navigation stack: the template tray, the toast and the ＋ menu.
     private var layered: some View {
         navigation
+            .overlay {
+                if isSlides {
+                    SlidesHomeView {
+                        withAnimation(.snappy) { mode = HomeMode.calendar.rawValue }
+                    }
+                    .background(Color(uiColor: .systemBackground))
+                    .transition(.move(edge: .bottom).combined(with: .opacity))
+                }
+            }
+            .animation(.snappy(duration: 0.35), value: isSlides)
             .overlay(alignment: .bottom) { trayLayer }
             .overlay(alignment: .bottom) { calendarBar }
             .overlay(alignment: .bottom) { toastLayer }
@@ -420,7 +435,7 @@ struct HomeView: View {
     @ViewBuilder
     private var toastLayer: some View {
         // Mo shows the toast above its own tab bar.
-        if let toast = toasts.current, !isMo, !isNotes {
+        if let toast = toasts.current, !isMo, !isNotes, !isSlides {
             UndoToastView(toast: toast) { toasts.performUndo() }
                 .padding(.horizontal, isTodo ? 20 : 20 + 56 + 10)
                 .padding(.bottom, isTodo ? 20 + 56 + 12 : 20)

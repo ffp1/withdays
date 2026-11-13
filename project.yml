@@ -7,9 +7,13 @@ options:
 
 settings:
   base:
-    MARKETING_VERSION: "1.6.2"
+    MARKETING_VERSION: "1.7.0"
     CURRENT_PROJECT_VERSION: "1"
     SWIFT_VERSION: "5.0"
+
+packages:
+  SlidesFeature:
+    path: SlidesFeature
 
 targets:
   WithDays:
@@ -26,8 +30,11 @@ targets:
         CFBundleDevelopmentRegion: ja
         LSRequiresIPhoneOS: true
         UILaunchScreen: {}
+        # Portrait everywhere; Slides' player turns to landscape (the app delegate decides, per moment).
         UISupportedInterfaceOrientations:
           - UIInterfaceOrientationPortrait
+          - UIInterfaceOrientationLandscapeLeft
+          - UIInterfaceOrientationLandscapeRight
         ITSAppUsesNonExemptEncryption: false
         NSCalendarsFullAccessUsageDescription: Appleのカレンダーの予定を表示・追加・編集するために使います。
         NSCalendarsUsageDescription: Appleのカレンダーの予定を表示・追加・編集するために使います。
@@ -45,6 +52,7 @@ targets:
               - withdays
     dependencies:
       - target: WithDaysWidget
+      - package: SlidesFeature
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.ffuime.withdays

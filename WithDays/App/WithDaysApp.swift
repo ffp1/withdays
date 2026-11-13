@@ -1,7 +1,22 @@
+import SlidesFeature
 import SwiftUI
+import UIKit
+
+/// Only for the screen's orientation: portrait, except while Slides plays.
+final class WithDaysAppDelegate: NSObject, UIApplicationDelegate {
+    func application(_ application: UIApplication, didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]? = nil) -> Bool {
+        SlidesFonts.registerImportedFonts()
+        return true
+    }
+
+    func application(_ application: UIApplication, supportedInterfaceOrientationsFor window: UIWindow?) -> UIInterfaceOrientationMask {
+        SlidesOrientation.supported
+    }
+}
 
 @main
 struct WithDaysApp: App {
+    @UIApplicationDelegateAdaptor(WithDaysAppDelegate.self) private var appDelegate
     @State private var store = CalendarStore()
     @State private var templates = TemplateStore()
     @State private var todos = TodoStore()

@@ -110,3 +110,39 @@ jobs:
           git add source.json
           git commit -m "Update SideStore source to ${{ github.ref_name }}" || exit 0
           git push origin main
+
+      # SlidesFeature's unit tests, on an iOS simulator. After the IPA is uploaded, so a failing test
+      # still leaves the build to install.
+      - name: Test SlidesFeature
+        run: |
+          set -o pipefail
+          UDID=$(xcrun simctl list devices available -j | python3 -c '
+          import json, sys
+          devices = json.load(sys.stdin)["devices"]
+          for runtime in sorted(devices, reverse=True):
+              if "iOS-26" in runtime:
+                  for device in devices[runtime]:
+                      if device["name"].startswith("iPhone"):
+                          print(device["udid"])
+                          sys.exit()
+          ')
+          if [ -z "$UDID" ]; then
+            echo "::warning::No iOS 26 simulator on this runner; tests skipped"
+            exit 0
+          fi
+          cd SlidesFeature
+          SCHEME=$(xcodebuild -list -json | python3 -c '
+          import json, sys
+          schemes = json.load(sys.stdin).get("workspace", {}).get("schemes", [])
+          print(next((s for s in schemes if s.endswith("-Package")), "SlidesFeature"))
+          ')
+          echo "Testing $SCHEME on $UDID"
+          xcodebuild test -scheme "$SCHEME" -destination "id=$UDID" -derivedDataPath ../build-tests 2>&1 \
+            | tee ../test.log | grep -E "error:|Test Case .*failed|Executed [0-9]+ test|TEST (SUCCEEDED|FAILED)" || true
+          grep -q "TEST SUCCEEDED" ../test.log
+
+      - name: Show test failures
+        if: failure()
+        run: |
+          [ -f test.log ] || exit 0
+          grep -E "error:|failed" test.log | sort -u | head -n 60 | while IFS= read -r line; do echo "::error::$line"; done
