@@ -1,5 +1,6 @@
 import Foundation
 import SwiftData
+import SwiftUI
 import UIKit
 
 /// What's being typed in: a text box, or one cell of a table.
