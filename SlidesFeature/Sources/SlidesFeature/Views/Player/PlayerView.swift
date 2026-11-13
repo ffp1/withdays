@@ -67,8 +67,12 @@ struct PlayerView: View {
     @State private var step = 0
     @State private var looks: [UUID: ElementLook] = [:]
     @State private var forward = true
-    /// The transition of the slide being shown next; set before the change, so the leaving slide uses it too.
+    /// During a transition: the slide leaving (drawn until the new one has fully arrived), how it looked, and how far
+    /// the transition has got (0 → 1).
+    @State private var outgoing: Int?
+    @State private var outgoingLooks: [UUID: ElementLook] = [:]
     @State private var transitionKind = TransitionKind.none
+    @State private var progress: CGFloat = 1
     @State private var shown = false
     @State private var leaving = false
     @State private var showsControls = false
@@ -115,11 +119,20 @@ struct PlayerView: View {
         GeometryReader { geo in
             let scale = min(geo.size.width / 1920, geo.size.height / 1080)
             ZStack {
+                if let outgoing, slides.indices.contains(outgoing) {
+                    PlayedSlide(slide: slides[outgoing], deck: deck, scale: scale, looks: outgoingLooks)
+                        .frame(width: 1920 * scale, height: 1080 * scale)
+                        .modifier(SlideTransitionEffect(
+                            kind: effectiveKind, progress: progress, incoming: false, forward: forward, distance: geo.size.width
+                        ))
+                }
                 if let slide {
                     PlayedSlide(slide: slide, deck: deck, scale: scale, looks: looks)
                         .frame(width: 1920 * scale, height: 1080 * scale)
+                        .modifier(SlideTransitionEffect(
+                            kind: outgoing == nil ? .none : effectiveKind, progress: progress, incoming: true, forward: forward, distance: geo.size.width
+                        ))
                         .id(slide.id)
-                        .transition(transition(for: transitionKind))
                         .scaleEffect(1 - min(dragDown, 600) / 1400)
                         .offset(y: dragDown)
                 }
@@ -262,24 +275,44 @@ struct PlayerView: View {
         }
     }
 
+    /// A slide's transition belongs to the way into it: going forward plays the next slide's, going back plays the
+    /// current slide's backwards (so coming back to a slide doesn't replay its own).
     private func go(_ delta: Int, animated: Bool) {
         let target = index + delta
         guard slides.indices.contains(target), !leaving else { return }
-        let kind = slides[target].transition.kind
-        let duration = slides[target].transition.duration
+        let transition = delta > 0 ? slides[target].transition : slides[index].transition
         forward = delta > 0
-        // The leaving slide takes its transition from what's drawn now, so set it before the change.
-        transitionKind = kind
-        DispatchQueue.main.async {
-            if kind == .none {
-                var transaction = Transaction(animation: nil)
-                transaction.disablesAnimations = true
-                withTransaction(transaction) { index = target }
-            } else {
-                withAnimation(.easeInOut(duration: duration)) { index = target }
-            }
+        if transition.kind == .none {
+            outgoing = nil
+            progress = 1
+            index = target
             enter(animated: animated)
+            return
         }
+        // Both slides are drawn until the new one has arrived.
+        var transaction = Transaction(animation: nil)
+        transaction.disablesAnimations = true
+        withTransaction(transaction) {
+            outgoingLooks = looks
+            outgoing = index
+            transitionKind = transition.kind
+            progress = 0
+            index = target
+        }
+        enter(animated: animated)
+        let started = generation
+        DispatchQueue.main.async {
+            withAnimation(.easeInOut(duration: transition.duration)) {
+                progress = 1
+            } completion: {
+                // A newer change has its own outgoing slide.
+                if generation == started { outgoing = nil }
+            }
+        }
+    }
+
+    private var effectiveKind: TransitionKind {
+        reduceMotion && transitionKind != .none ? .fade : transitionKind
     }
 
     /// Sets up the slide's elements: with animations, as they start (then runs the automatic step);
@@ -318,22 +351,52 @@ struct PlayerView: View {
         }
     }
 
-    private func transition(for kind: TransitionKind) -> AnyTransition {
-        if reduceMotion { return kind == .none ? .identity : .opacity }
+}
+
+/// Where a slide is during a transition. Incoming at 0 is where it starts; outgoing at 1 is where it ends.
+/// Push and cover move a whole screen's width; going back runs them the other way.
+struct SlideTransitionEffect: ViewModifier {
+    let kind: TransitionKind
+    let progress: CGFloat
+    let incoming: Bool
+    let forward: Bool
+    let distance: CGFloat
+
+    func body(content: Content) -> some View {
+        content
+            .offset(x: offset)
+            .scaleEffect(scale)
+            .opacity(opacity)
+    }
+
+    /// +1 when the new slide comes from the right.
+    private var side: CGFloat {
+        let fromRight: Bool = switch kind {
+        case .pushRight: !forward
+        default: forward
+        }
+        return fromRight ? 1 : -1
+    }
+
+    private var offset: CGFloat {
         switch kind {
-        case .none:
-            return .identity
-        case .fade:
-            return .opacity
-        case .pushLeft:
-            return .asymmetric(insertion: .move(edge: forward ? .trailing : .leading), removal: .move(edge: forward ? .leading : .trailing))
-        case .pushRight:
-            return .asymmetric(insertion: .move(edge: forward ? .leading : .trailing), removal: .move(edge: forward ? .trailing : .leading))
+        case .pushLeft, .pushRight:
+            return incoming ? (1 - progress) * distance * side : -progress * distance * side
         case .cover:
-            // The new slide slides over the old one, which stays until covered.
-            return .asymmetric(insertion: .move(edge: forward ? .trailing : .leading), removal: .opacity.animation(.linear(duration: 0.01).delay(0.6)))
-        case .zoom:
-            return .asymmetric(insertion: .scale(scale: 0.3).combined(with: .opacity), removal: .opacity)
+            return incoming ? (1 - progress) * distance * side : 0
+        default:
+            return 0
+        }
+    }
+
+    private var scale: CGFloat {
+        kind == .zoom && incoming ? 0.3 + 0.7 * progress : 1
+    }
+
+    private var opacity: Double {
+        switch kind {
+        case .fade, .zoom: incoming ? Double(progress) : 1
+        default: 1
         }
     }
 }
@@ -353,7 +416,7 @@ struct PlayedSlide: View {
                 .frame(width: 1920 * scale, height: 1080 * scale)
             ForEach(slide.elements) { element in
                 let frame = element.frame.cg
-                let padding = SlideRenderer.padding
+                let padding = SlideRenderer.padding(for: element)
                 let look = looks[element.id]
                 ElementRenderView(element: element, deck: deck, scale: scale)
                     .frame(width: (frame.width + padding * 2) * scale, height: (frame.height + padding * 2) * scale)

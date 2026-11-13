@@ -353,8 +353,17 @@ final class DeckEditor {
         current.animations.filter { $0.elementID == id }
     }
 
+    /// An element has at most one 登場 and one 退場, its 登場 first.
     func addAnimation(to id: UUID, category: AnimationCategory) {
-        changeCurrentSlide { $0.animations.append(ElementAnimation(elementID: id, category: category)) }
+        changeCurrentSlide { slide in
+            guard !slide.animations.contains(where: { $0.elementID == id && $0.category == category }) else { return }
+            let animation = ElementAnimation(elementID: id, category: category)
+            if category == .entrance, let exit = slide.animations.firstIndex(where: { $0.elementID == id && $0.category == .exit }) {
+                slide.animations.insert(animation, at: exit)
+            } else {
+                slide.animations.append(animation)
+            }
+        }
     }
 
     func updateAnimation(_ animation: ElementAnimation) {

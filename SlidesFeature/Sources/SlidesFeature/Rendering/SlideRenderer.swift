@@ -9,6 +9,22 @@ enum SlideRenderer {
     /// Room around an element's frame for its stroke, arrowheads and shadow.
     static let padding: CGFloat = 60
 
+    /// Enough room for this element's shadow and stroke, so nothing it draws is cut off.
+    static func padding(for element: SlideElement) -> CGFloat {
+        var extent: Double = 0
+        switch element.content {
+        case .shape(let shape):
+            if let shadow = shape.shadow { extent = shadow.blur * 1.6 + max(abs(shadow.x), abs(shadow.y)) }
+            extent = max(extent, (shape.stroke?.width ?? 0) * 0.75)
+        case .text(let box):
+            if let shadow = box.text.shadow { extent = shadow.blur * 1.6 + max(abs(shadow.x), abs(shadow.y)) }
+            extent = max(extent, box.text.outline?.width ?? 0)
+        default:
+            break
+        }
+        return max(padding, CGFloat(extent) + 12)
+    }
+
     /// `preview` draws images at screen size (thumbnails, the editor); exports leave it off for full resolution.
     static func draw(_ slide: SlideContent, deck: UUID, in context: CGContext, preview: Bool = false) {
         UIGraphicsPushContext(context)
@@ -322,6 +338,7 @@ enum SlideRenderer {
         let format = UIGraphicsImageRendererFormat()
         format.scale = 1
         format.opaque = false
+        let padding = padding(for: element)
         let size = CGSize(width: frame.width + padding * 2, height: frame.height + padding * 2)
         return UIGraphicsImageRenderer(size: size, format: format).image { context in
             context.cgContext.translateBy(x: padding, y: padding)

@@ -223,9 +223,12 @@ enum VAlign: String, Codable, CaseIterable {
 }
 
 /// A run of text with one formatting. `font` is a PostScript name, a family name, or "System".
+/// New text is set in ヒラギノ角ゴシック.
 struct TextRun: Codable, Hashable {
+    static let defaultFont = "HiraginoSans-W3"
+
     var text: String
-    var font: String = "System"
+    var font: String = TextRun.defaultFont
     var size: Double = 44
     var bold = false
     var italic = false
@@ -252,6 +255,10 @@ struct RichText: Codable, Hashable {
     var lineSpacing: Double = 1.0
     /// Extra space between characters, in points.
     var charSpacing: Double = 0
+    /// An outline around the letters.
+    var outline: Stroke?
+    /// A shadow behind the letters.
+    var shadow: ShadowStyle?
 
     var plainText: String { runs.map(\.text).joined() }
 

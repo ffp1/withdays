@@ -52,7 +52,8 @@ final class ElementDrawingView: UIView {
     override func draw(_ rect: CGRect) {
         guard let element, let look, let context = UIGraphicsGetCurrentContext() else { return }
         context.scaleBy(x: look.scale, y: look.scale)
-        context.translateBy(x: SlideRenderer.padding, y: SlideRenderer.padding)
+        let padding = SlideRenderer.padding(for: element)
+        context.translateBy(x: padding, y: padding)
         SlideRenderer.drawContent(element, deck: deck, in: context, preview: true, placeholders: look.placeholders)
     }
 }

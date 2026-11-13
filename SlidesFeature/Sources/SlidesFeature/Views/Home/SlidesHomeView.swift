@@ -99,7 +99,9 @@ struct SlidesRoot: View {
                         ToolbarItem(placement: .topBarTrailing) {
                             Button(action: onClose) {
                                 Image(systemName: "calendar")
+                                    .foregroundStyle(.primary)
                             }
+                            .tint(.primary)
                             .accessibilityLabel("カレンダーに戻る")
                         }
                     }

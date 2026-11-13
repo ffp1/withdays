@@ -35,8 +35,8 @@ One line per decision: the decision, then why.
 - The editor's top controls are drawn by the editor itself as glass pills (back; undo / redo; ＋ / ▶ / ⋯), not navigation-bar items: the bar's items sometimes went missing.
 - ▶ plays from the first slide; holding it plays from the slide on screen.
 - A tap selects an element; tapping the selected text box (so also a double tap) starts typing; a selected table types in the tapped cell.
-- A drag that starts on an element moves it; a sideways swipe that starts on empty slide or outside the slide changes slide, to the right for the next one (requested) — §14-8.
-- Pinching with nothing selected zooms the view (up to 500 %); zoomed in, a drag on empty space moves it; the % button goes back to the whole slide.
+- A drag that starts on an element moves it; a sideways swipe that starts on empty slide or outside the slide changes slide: right to left for the next one, left to right for the previous one — §14-8.
+- Pinching with nothing selected zooms the view (up to 500 %) around the fingers: a scale while pinching, redrawn sharp when the fingers lift. Zoomed in, a drag on empty space moves it; the % button goes back to the whole slide. While two fingers are down, taps and drags on elements are ignored (a drag that becomes a pinch puts the element back).
 - With an element selected the glass bar shows its tools and その他 (複製, stacking order, 削除); with nothing selected it shows 背景 and トランジション — §9 / §14-9.
 - 配置 for a text box is a menu of horizontal and vertical alignment; 色 is a short sheet with swatches and a picker.
 - A new text box holds 「テキスト」, selected, so typing replaces it.
@@ -61,6 +61,7 @@ One line per decision: the decision, then why.
 - Tap in the middle third toggles the controls; right third → next (animation step first), left third → previous; controls hide after 3 s — §14-7. Controls are small and stay inside the safe area.
 - The player opens on black without a slide-up, turns the screen, then fades the slide in (and fades out before turning back), so the turn isn't seen.
 - A swipe changes slide with every element in its final state; a tap runs the next step — §9.
+- A slide's transition is the way into it: forward plays the next slide's; back plays the current slide's in reverse (so coming back to a slide doesn't replay its own). Both slides are drawn during the transition.
 - Animations before the first タップ時 run as the slide appears.
 - Reduce Motion turns transitions into fades and drops movement from element animations.
 
@@ -82,3 +83,11 @@ One line per decision: the decision, then why.
 ## Fonts
 
 - The font picker lists families; a family with several weights (ヒラギノ角ゴシック W0–W9, SF Pro…) opens a list of them. The system font's weights are stored as "System-<weight>".
+- New text is set in ヒラギノ角ゴシック (HiraginoSans-W3); bold uses its W6.
+
+## Text effects and animations
+
+- Text boxes can have an outline (縁取り) and a shadow on their letters, box-wide; PowerPoint gets them as a:ln and a:outerShdw on each run.
+- An element has at most one 登場 and one 退場 (登場 first); more of the same made no sense.
+- Format sheets stay at the medium height and scroll inside.
+- Every delete action is red.

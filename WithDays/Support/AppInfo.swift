@@ -23,6 +23,10 @@ enum AppInfo {
 
     /// Newest first. Add an entry here with each release.
     static let changelog: [Release] = [
+        Release(version: "1.7.2", date: "2026.11.13", notes: [
+            "Slides：文字の縁取りと影、なめらかな拡大",
+            "Slides：トランジションで前のスライドが残るように、戻るときは逆向きに",
+        ]),
         Release(version: "1.7.1", date: "2026.11.13", notes: [
             "Slides：吸着、スライドの表示の拡大、フォントのウェイト",
             "Slides：プレースホルダー、お気に入りの☆、▶長押しで現在のスライドから再生",

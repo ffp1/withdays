@@ -77,6 +77,30 @@ struct TextFormatForm: View {
             Section("文字色") {
                 ColorRow(color: run.color) { color in formatter.applyRun(key: "color") { $0.color = color } }
             }
+            Section("効果") {
+                Toggle("縁取り", isOn: Binding(get: { text.outline != nil }, set: { on in
+                    formatter.applyBox(key: "outlineOn") { $0.outline = on ? ($0.outline ?? Stroke(color: .white, width: 4)) : nil }
+                }))
+                .tint(SlidesTheme.brand)
+                if let outline = text.outline {
+                    ColorRow(color: outline.color) { color in formatter.applyBox(key: "outlineColor") { $0.outline?.color = color } }
+                    ValueSlider(
+                        title: "縁取りの太さ",
+                        value: Binding(get: { outline.width }, set: { value in formatter.applyBox(key: "outlineWidth") { $0.outline?.width = value } }),
+                        range: 1...30
+                    )
+                }
+                Toggle("影", isOn: Binding(get: { text.shadow != nil }, set: { on in
+                    formatter.applyBox(key: "shadowOn") { $0.shadow = on ? ($0.shadow ?? ShadowStyle(blur: 12, x: 0, y: 6)) : nil }
+                }))
+                .tint(SlidesTheme.brand)
+                if let shadow = text.shadow {
+                    ColorRow(color: shadow.color) { color in formatter.applyBox(key: "shadowColor") { $0.shadow?.color = color } }
+                    ValueSlider(title: "ぼかし", value: Binding(get: { shadow.blur }, set: { value in formatter.applyBox(key: "shadowBlur") { $0.shadow?.blur = value } }), range: 0...60)
+                    ValueSlider(title: "横のずれ", value: Binding(get: { shadow.x }, set: { value in formatter.applyBox(key: "shadowX") { $0.shadow?.x = value } }), range: -40...40)
+                    ValueSlider(title: "縦のずれ", value: Binding(get: { shadow.y }, set: { value in formatter.applyBox(key: "shadowY") { $0.shadow?.y = value } }), range: -40...40)
+                }
+            }
             Section("間隔") {
                 ValueSlider(
                     title: "行間",
@@ -142,6 +166,7 @@ struct FontPickerView: View {
                         )
                         .swipeActions(edge: .trailing) {
                             Button("削除", role: .destructive) { askToDelete(group.faces) }
+                                .tint(.red)
                         }
                     }
                 }

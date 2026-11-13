@@ -210,6 +210,7 @@ struct FillEditor: View {
                 } label: {
                     Label("色を削除", systemImage: "minus")
                         .font(.system(size: 13, weight: .semibold))
+                        .foregroundStyle(.red)
                 }
                 .buttonStyle(.glass)
                 .disabled(gradient.stops.count <= 2)
@@ -323,5 +324,15 @@ struct GradientBar: View {
             .coordinateSpace(.named("gradientBar"))
         }
         .frame(height: 48)
+    }
+}
+
+extension View {
+    /// The format sheets: the slide stays in view above, and the sheet keeps its height and scrolls inside.
+    func formatSheet() -> some View {
+        presentationDetents([.medium])
+            .presentationContentInteraction(.scrolls)
+            .presentationBackgroundInteraction(.enabled(upThrough: .medium))
+            .presentationDragIndicator(.visible)
     }
 }

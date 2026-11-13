@@ -495,7 +495,7 @@ struct SlideWriter {
     private mutating func rasterized(_ element: SlideElement, id: Int) -> String {
         guard let png = SlideRenderer.image(of: element, deck: deck).pngData() else { return "" }
         let rel = relationship(for: media.add(png: png))
-        let padding = Double(SlideRenderer.padding)
+        let padding = Double(SlideRenderer.padding(for: element))
         let frame = element.frame.cg.insetBy(dx: -padding, dy: -padding)
         let alpha = element.opacity < 0.999 ? "<a:alphaModFix amt=\"\(pct(element.opacity))\"/>" : ""
         return "<p:pic><p:nvPicPr><p:cNvPr id=\"\(id)\" name=\"Picture \(id)\"/><p:cNvPicPr/><p:nvPr/></p:nvPicPr>"
@@ -589,7 +589,17 @@ struct SlideWriter {
         if text.charSpacing != 0 { attributes += " spc=\"\(Int((text.charSpacing * 50).rounded()))\"" }
         let face = X.escape(Self.typeface(run.font))
         let eastAsian = run.font.hasPrefix("System") ? "Hiragino Sans" : face
-        return "<\(tag)\(attributes) dirty=\"0\">\(solid(run.color, opacity: opacity))<a:latin typeface=\"\(face)\"/><a:ea typeface=\"\(eastAsian)\"/><a:cs typeface=\"\(face)\"/></\(tag)>"
+        var outline = ""
+        if let stroke = text.outline, stroke.width > 0 {
+            outline = "<a:ln w=\"\(e(stroke.width))\">\(solid(stroke.color, opacity: opacity))</a:ln>"
+        }
+        var effects = ""
+        if let shadow = text.shadow {
+            var direction = atan2(shadow.y, shadow.x) * 180 / .pi
+            if direction < 0 { direction += 360 }
+            effects = "<a:effectLst><a:outerShdw blurRad=\"\(e(shadow.blur))\" dist=\"\(e(hypot(shadow.x, shadow.y)))\" dir=\"\(Int((direction * 60000).rounded()))\" algn=\"ctr\" rotWithShape=\"0\">\(color(shadow.color, opacity: opacity))</a:outerShdw></a:effectLst>"
+        }
+        return "<\(tag)\(attributes) dirty=\"0\">\(outline)\(solid(run.color, opacity: opacity))\(effects)<a:latin typeface=\"\(face)\"/><a:ea typeface=\"\(eastAsian)\"/><a:cs typeface=\"\(face)\"/></\(tag)>"
     }
 
     /// A family name PowerPoint can look for.

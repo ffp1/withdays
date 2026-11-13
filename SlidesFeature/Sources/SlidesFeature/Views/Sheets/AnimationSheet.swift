@@ -20,14 +20,21 @@ struct AnimationSheet: View {
                                 editor.deleteAnimation(animation.id)
                             } label: {
                                 Image(systemName: "trash")
+                                    .foregroundStyle(.red)
                             }
                             .accessibilityLabel("削除")
                         }
                     }
                 }
-                Section {
-                    Button("登場を追加", systemImage: "plus.circle") { editor.addAnimation(to: elementID, category: .entrance) }
-                    Button("退場を追加", systemImage: "minus.circle") { editor.addAnimation(to: elementID, category: .exit) }
+                if !animations.contains(where: { $0.category == .entrance }) || !animations.contains(where: { $0.category == .exit }) {
+                    Section {
+                        if !animations.contains(where: { $0.category == .entrance }) {
+                            Button("登場を追加", systemImage: "plus.circle") { editor.addAnimation(to: elementID, category: .entrance) }
+                        }
+                        if !animations.contains(where: { $0.category == .exit }) {
+                            Button("退場を追加", systemImage: "minus.circle") { editor.addAnimation(to: elementID, category: .exit) }
+                        }
+                    }
                 }
                 Section {
                     NavigationLink("このスライドの再生順") {
@@ -48,10 +55,6 @@ struct AnimationSheet: View {
 
     @ViewBuilder
     private func editorRows(_ animation: ElementAnimation) -> some View {
-        Picker("種類", selection: binding(animation, \.category)) {
-            ForEach(AnimationCategory.allCases, id: \.self) { Text($0.label).tag($0) }
-        }
-        .pickerStyle(.segmented)
         Picker("効果", selection: binding(animation, \.effect)) {
             ForEach(AnimationEffect.allCases, id: \.self) { Text($0.label).tag($0) }
         }
@@ -82,6 +85,8 @@ struct AnimationOrderView: View {
         List {
             ForEach(Array(editor.current.animations.enumerated()), id: \.element.id) { index, animation in
                 HStack(spacing: 10) {
+                    Image(systemName: "line.3.horizontal")
+                        .foregroundStyle(.tertiary)
                     Text("\(index + 1)")
                         .font(.system(size: 13, weight: .bold))
                         .monospacedDigit()
@@ -95,15 +100,14 @@ struct AnimationOrderView: View {
                             .foregroundStyle(.secondary)
                     }
                 }
+                .swipeActions(edge: .trailing) {
+                    Button("削除", systemImage: "trash", role: .destructive) { editor.deleteAnimation(animation.id) }
+                        .tint(.red)
+                }
             }
             .onMove { editor.moveAnimations(from: $0, to: $1) }
-            .onDelete { offsets in
-                let ids = offsets.map { editor.current.animations[$0].id }
-                for id in ids { editor.deleteAnimation(id) }
-            }
         }
-        .environment(\.editMode, .constant(.active))
-        .navigationTitle("再生順")
+        .navigationTitle("再生順（長押しで並べ替え）")
         .navigationBarTitleDisplayMode(.inline)
     }
 

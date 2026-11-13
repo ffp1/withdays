@@ -81,6 +81,7 @@ struct ContextToolbar: View {
         .menuStyle(.button)
         .buttonStyle(.plain)
         .tint(.primary)
+        .menuOrder(.fixed)
     }
 
     private func more(_ element: SlideElement) -> some View {
@@ -99,6 +100,7 @@ struct ContextToolbar: View {
         .menuStyle(.button)
         .buttonStyle(.plain)
         .tint(.primary)
+        .menuOrder(.fixed)
         .accessibilityLabel("その他")
     }
 

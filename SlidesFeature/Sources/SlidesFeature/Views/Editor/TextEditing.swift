@@ -64,6 +64,8 @@ final class TextEditingController {
         base.vAlign = text.vAlign
         base.lineSpacing = text.lineSpacing
         base.charSpacing = text.charSpacing
+        base.outline = text.outline
+        base.shadow = text.shadow
         let range = textView.selectedRange
         textView.attributedText = RichTextConverter.attributed(text)
         textView.selectedRange = range

@@ -60,6 +60,18 @@ enum RichTextConverter {
         ]
         if run.underline { attributes[.underlineStyle] = NSUnderlineStyle.single.rawValue }
         if run.strike { attributes[.strikethroughStyle] = NSUnderlineStyle.single.rawValue }
+        if let outline = text.outline, outline.width > 0 {
+            // Negative: filled and outlined. The width is a percentage of the font size.
+            attributes[.strokeColor] = outline.color.uiColor
+            attributes[.strokeWidth] = -CGFloat(outline.width / max(run.size, 1) * 100)
+        }
+        if let shadow = text.shadow {
+            let value = NSShadow()
+            value.shadowColor = shadow.color.uiColor
+            value.shadowBlurRadius = CGFloat(shadow.blur) * scale
+            value.shadowOffset = CGSize(width: shadow.x * scale, height: shadow.y * scale)
+            attributes[.shadow] = value
+        }
         return attributes
     }
 

@@ -233,6 +233,7 @@ struct EditorView: View {
                 .frame(width: 44, height: 44)
                 .contentShape(Rectangle())
         }
+        .tint(.primary)
         .accessibilityLabel("その他")
     }
 
@@ -265,31 +266,27 @@ struct EditorView: View {
         case .textFormat:
             if let selected {
                 TextFormatSheet(formatter: TextFormatter(editor: editor, controller: textController, elementID: selected))
-                    .presentationDetents([.medium, .large])
-                    .presentationBackgroundInteraction(.enabled(upThrough: .medium))
+                    .formatSheet()
             }
         case .textColor:
             if let selected {
                 TextColorSheet(formatter: TextFormatter(editor: editor, controller: textController, elementID: selected))
-                    .presentationDetents([.height(220)])
+                    .formatSheet()
             }
         case .shapeFill, .shapeStroke, .shapeEffects:
             if let selected {
                 ShapeFormatSheet(editor: editor, elementID: selected, tab: sheet == .shapeFill ? .fill : sheet == .shapeStroke ? .stroke : .effects)
-                    .presentationDetents([.medium, .large])
-                    .presentationBackgroundInteraction(.enabled(upThrough: .medium))
+                    .formatSheet()
             }
         case .lineFormat:
             if let selected {
                 LineFormatSheet(editor: editor, elementID: selected)
-                    .presentationDetents([.medium, .large])
-                    .presentationBackgroundInteraction(.enabled(upThrough: .medium))
+                    .formatSheet()
             }
         case .imageCrop:
             if let selected {
                 ImageCropSheet(editor: editor, elementID: selected)
-                    .presentationDetents([.medium, .large])
-                    .presentationBackgroundInteraction(.enabled(upThrough: .medium))
+                    .formatSheet()
             }
         case .tableSize:
             if let selected {
@@ -299,8 +296,7 @@ struct EditorView: View {
         case .tableFormat:
             if let selected {
                 TableFormatSheet(editor: editor, elementID: selected, formatter: TextFormatter(editor: editor, controller: textController, elementID: selected))
-                    .presentationDetents([.medium, .large])
-                    .presentationBackgroundInteraction(.enabled(upThrough: .medium))
+                    .formatSheet()
             }
         case .animation:
             if let selected {
@@ -309,8 +305,7 @@ struct EditorView: View {
             }
         case .background:
             BackgroundSheet(editor: editor)
-                .presentationDetents([.medium, .large])
-                .presentationBackgroundInteraction(.enabled(upThrough: .medium))
+                .formatSheet()
         case .transition:
             TransitionSheet(editor: editor)
                 .presentationDetents([.medium, .large])

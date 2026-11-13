@@ -108,7 +108,7 @@ struct PageStrip: View {
         } label: {
             Image(systemName: "plus")
                 .font(.system(size: 22, weight: .semibold))
-                .foregroundStyle(SlidesTheme.onBrand)
+                .foregroundStyle(.white)
                 .frame(width: 48, height: 48)
                 .background(Circle().fill(SlidesTheme.brand))
         }
